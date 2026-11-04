@@ -21,12 +21,6 @@ import { isMainAppSurface, isObsBrowserSourceSurface, isRemoteControlSurface, ob
 // 副作用 import：store 在模块加载时就把 `<html data-reduce-motion>` 写好并保持同步。放在 bootstrap
 // 而不是 App 里，是因为下面按 URL 挂的根不止 App —— 远程控制窗口的进度辉光也读这个属性。
 import './stores/useMotionSettingsStore';
-// Android 原生 fetch 桥：跨域请求（波点/酷狗旧接口等）经 OkHttp + CookieManager 发出，绕过 CORS
-import { installNativeFetchShim } from './audioNative/fetchShim';
-installNativeFetchShim();
-// 带前缀的 console 行（[YTM]/[KuGou]/[QQ]…）同时转给原生侧，落到外部可读的日志文件里。
-import { installConsoleDiagnosticsBridge } from './audioNative/consoleDiagnostics';
-installConsoleDiagnosticsBridge();
 
 // src/bootstrap.tsx
 // Mounts the React app after index.tsx installs runtime-level browser shims.

@@ -88,8 +88,6 @@ const MemoryMonitorWindow: React.FC<MemoryMonitorWindowProps> = ({ isDaylight, s
     const { t } = useTranslation();
     const history = useSyncExternalStore(subscribeToMemoryHistory, getMemoryHistory);
     const debug = useSyncExternalStore(subscribeToDebugModule, getDebugModuleSnapshot);
-    // 无主进程 = 手机/浏览器；手机上窗口按 60% 显示，快捷键提示也不显示。
-    const mobile = debug.memoryAvailable && !debug.available;
     const [hidden, setHidden] = useState<ReadonlySet<SeriesKey>>(() => new Set());
 
     const shown = useMemo(() => SERIES.filter(series => !hidden.has(series.key)), [hidden]);
@@ -151,13 +149,11 @@ const MemoryMonitorWindow: React.FC<MemoryMonitorWindowProps> = ({ isDaylight, s
         <DraggableDebugWindow
             id="memory"
             title={t('options.memoryMonitor') || 'Memory monitor'}
-            // 手机没有键盘，快捷键提示只对桌面有意义。
-            shortcutLabel={mobile ? undefined : shortcutLabel}
+            shortcutLabel={shortcutLabel}
             isDaylight={isDaylight}
             onClose={onClose}
             widthClass="w-[min(32rem,calc(100vw-2rem))]"
             defaultOffset={{ x: -32, y: 56 }}
-            scale={mobile ? 0.6 : 1}
         >
             <div className="grid gap-3">
                 <section className={panelClass}>

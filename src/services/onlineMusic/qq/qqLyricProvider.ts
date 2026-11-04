@@ -28,9 +28,7 @@ async function requestQQ(method: string, module: string, param: any): Promise<an
       os_ver: "15",
       phonetype: "24122RKC7C",
       rom: "Redmi/miro/miro:15/AE3A.240806.005/OS2.0.102.0.VOMCNXM:user/release-keys",
-      // 2026-10-25：不要再带 tmeAppID: 'qqmusiclight'。上游把这个 App 身份软封了——
-      // 搜索一律回 2001 / 空 item_song（同一请求不带它或在原生层用 'qqmusic' 都正常回 20 条）。
-      // 歌词接口对 tmeAppID 不敏感（带/不带/换值结果一致），去掉不影响歌词。
+      tmeAppID: "qqmusiclight",
       nettype: "NETWORK_WIFI",
       udid: "0",
       uid: "0",
@@ -43,22 +41,6 @@ async function requestQQ(method: string, module: string, param: any): Promise<an
   };
 
   const targetUrl = 'https://u.y.qq.com/cgi-bin/musicu.fcg';
-  // Android（Capacitor）：没有同源代理，直接走原生桥请求上游
-  const bridge = (window as any).Capacitor?.Plugins?.FoliaBridge;
-  if (!isElectron && bridge) {
-    const r = await bridge.request({
-      url: targetUrl,
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Cookie: 'tmeLoginType=-1;', 'User-Agent': 'okhttp/3.14.9' },
-      body: JSON.stringify(payload),
-      timeoutMs: 20000,
-    });
-    const data = JSON.parse(r?.body ?? '{}');
-    if (data.code !== 0 || data.request?.code !== 0) {
-      throw new Error(`QQ Music API error: code ${data.code || data.request?.code}`);
-    }
-    return data.request.data;
-  }
   const url = isElectron ? targetUrl : lyricProxyWebUrl(targetUrl);
 
   const response = await fetch(url, {
@@ -155,13 +137,9 @@ export async function searchQQSongs(keyword: string, page = 1, pageSize = 20): P
         id: Number(info.album?.id || 0),
         name: info.album?.name || 'Unknown Album',
         coverUrl: picUrl,
-        // 专辑 mid 是导航与播放要的键，数字 albumid 只在完全没有 mid 时才用
-        ...(albumMid ? { mid: albumMid } : {}),
       },
       durationMs: (info.interval || 0) * 1000,
       qqMid: info.mid,
-      // file 里带着 media_mid：播放链接的 filename 由它拼，丢了它这些歌会拿不到链接
-      ...(info.file ? { file: info.file } : {}),
     };
   });
 }

@@ -20,8 +20,6 @@ const CASE_OF = new Map<string, LoginCaseId>([
     ['not-taken', 'refused'],
     ['no-answer', 'no-answer'],
     ['account-missing', 'account-not-read'],
-    // 手机版（Android）没有可用的登录通道：WebView 里开不了 Google 的授权页。
-    ['mobile-no-login', 'mobile-no-login'],
 ]);
 
 // A failure as the desktop side tells it: its code, its sentence and, where it has one, its

@@ -1,4 +1,3 @@
-import { androidModsBridge } from './android/androidModsBridge';
 import type {
     ModClearCacheResult,
     ModFfmpegStatus,
@@ -18,14 +17,10 @@ import type {
 // Typed access to the preload bridge under window.electron.mods. Every call
 // degrades to a safe fallback on the web build so the panel stays renderable
 // even when no Electron bridge exists (the UI then shows a desktop-only hint).
-// On the Android app the same calls are answered inside the window by
-// android/androidModsBridge.ts, which stands in for the main process there.
 
-const bridge = (): NonNullable<typeof window.electron>['mods'] => (
-    window.electron?.mods ?? (androidModsBridge() as NonNullable<typeof window.electron>['mods'] | null) ?? undefined
-);
+const bridge = (): NonNullable<typeof window.electron>['mods'] => window.electron?.mods;
 
-export const isModsBridgeAvailable = (): boolean => Boolean(window.electron?.mods ?? androidModsBridge());
+export const isModsBridgeAvailable = (): boolean => Boolean(window.electron?.mods);
 
 const EMPTY_PAYLOAD: ModsListPayload = {
     mods: [],
@@ -205,20 +200,6 @@ export const installModFromZip = async (
 ): Promise<{ ok: boolean; id?: string; error?: string }> => {
     const response = await bridge()?.installModFromZip(zipPath);
     return response ?? { ok: false, error: 'no-electron-bridge' };
-};
-
-/**
- * The Android app's install path: the picker's file comes as bytes, unpacked in the window by
- * android/androidModsBridge.ts (the desktop keeps its path-based install above).
- */
-export const installModFromZipFile = async (
-    file: File,
-): Promise<{ ok: boolean; id?: string; error?: string }> => {
-    const installer = (bridge() as unknown as {
-        installModFromZipFile?: (picked: File) => Promise<{ ok: boolean; id?: string; error?: string }>;
-    } | undefined)?.installModFromZipFile;
-    if (!installer) return { ok: false, error: 'install-no-path' };
-    return installer(file);
 };
 
 /** Bytes a mod keeps on disk (data and cache); disabled mods included, broken entries refused. */

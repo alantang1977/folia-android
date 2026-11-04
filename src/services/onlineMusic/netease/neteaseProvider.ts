@@ -2,6 +2,8 @@ import type { SongResult, UnifiedSong } from '../../../types';
 import { OnlineProviderError } from '../../../types/onlineMusic';
 import type {
     AudioQualityPreference,
+    DailyStyleGroup,
+    ListeningRankRange,
     LoginDiagnosticLine,
     MediaId,
     OnlineMusicProvider,
@@ -19,13 +21,15 @@ import { toFiniteNumber } from '../../../utils/replayGain';
 import { createProviderSongMetadata } from '../../../utils/songMetadata';
 import { NeteaseLoginHttpError, getNeteaseRemoteApiBase, httpErrorStatusOf, neteaseApi, resolveNeteaseSongAvailability } from './netease';
 import i18n from '../../../i18n/config';
-import { removeProviderSessionValue, writeProviderSessionValue } from '../providerStorage';
+import { readProviderSessionValue, removeProviderSessionValue, writeProviderSessionValue } from '../providerStorage';
 import { readNeteaseOldAccountCache, removeNeteaseOldAccountCache } from './neteaseOldAccountCache';
 import { collectNeteaseLoginDiagnostics } from './neteaseLoginDiagnostics';
 import { describeNeteaseLoginFailure, neteaseCheckFailure } from './neteaseLoginFailure';
 import { describeNeteaseFailure, isRefusedNeteaseAnswer, neteaseAnswerError, neteaseNoUrlError } from './neteaseFailure';
 import { neteaseLocalService, watchNeteaseLocalService } from './neteaseLocalService';
 import { createNeteaseExplore } from './neteaseExplore';
+import { neteaseRaw } from './neteaseRaw';
+import { LISTENING_RANK_RANGES, listeningRankCollection, listeningRankPage, withListenCount } from '../listeningRank';
 import { canRunLoginSelfCheck, runLoginSelfCheck } from '../loginSelfCheck';
 import { diagnosticLine, formatDiagnosticClock } from '../login/loginDiagnosticReport';
 
@@ -36,6 +40,9 @@ export const toNeteaseId = (id: MediaId): number => {
     if (!Number.isFinite(numericId)) throw new Error(`Invalid NetEase id: ${String(id)}`);
     return numericId;
 };
+
+// How many ids one `/song/detail` request of `playback.getSongDetails` carries.
+export const NETEASE_SONG_DETAIL_BATCH = 50;
 
 const mapQuality = (quality: AudioQualityPreference): string => {
     if (quality === 'standard') return 'standard';
@@ -56,6 +63,15 @@ const mapScrobbleQuality = (quality?: AudioQualityPreference): { level: string; 
 
 /** This provider's normalized view of a song, shared by `songMetadata` and the listening report. */
 const getNeteaseSongMetadata = (song: SongResult) => createProviderSongMetadata(normalizeNeteaseSong(song));
+
+/** One group of the style recommendation's styles (`{ categoryId, categoryName, tagVOList }`); tags without an id are left out. */
+const normalizeDailyStyleGroup = (raw: any): DailyStyleGroup => ({
+    id: raw?.categoryId != null ? String(raw.categoryId) : '',
+    name: typeof raw?.categoryName === 'string' ? raw.categoryName : '',
+    tags: (Array.isArray(raw?.tagVOList) ? raw.tagVOList : [])
+        .filter((tag: any) => tag?.tagId != null)
+        .map((tag: any) => ({ id: String(tag.tagId), name: typeof tag.tagName === 'string' ? tag.tagName : String(tag.tagId) })),
+});
 
 const normalizeUser = (raw: any): ProviderUser => ({
     id: raw?.userId ?? raw?.id ?? 0,
@@ -111,7 +127,9 @@ const normalizeCollection = (raw: any, type = 'playlist'): ProviderCollection =>
         providerId: 'netease',
         id: raw?.id ?? 0,
         name: raw?.name || '',
-        type: raw?.type || (raw?.specialType === 'cloud' ? 'cloud' : type),
+        // 网易云的专辑对象自己带一个 `type`，是它的发行类型（「专辑」「EP/Single」这类），不是集合的种类：
+        // 按专辑或歌手读到的就是专辑或歌手。别的照旧取 raw.type，已经正规化过的歌单再读一遍不变。
+        type: type === 'album' || type === 'artist' ? type : raw?.type || (raw?.specialType === 'cloud' ? 'cloud' : type),
         coverUrl: raw?.coverUrl || raw?.coverImgUrl || raw?.picUrl,
         description: raw?.description || raw?.briefDesc || raw?.briefDescription || raw?.copywriter,
         trackCount: raw?.trackCount ?? raw?.size,
@@ -130,12 +148,39 @@ const normalizeCollection = (raw: any, type = 'playlist'): ProviderCollection =>
     };
 };
 
+// `/user/record`'s type and the field its rows come in, a span each.
+const NETEASE_LISTENING_RANK: Record<ListeningRankRange, { type: 0 | 1; rows: 'weekData' | 'allData' }> = {
+    week: { type: 1, rows: 'weekData' },
+    all: { type: 0, rows: 'allData' },
+};
+/**
+ * A user's listening ranking over a span, in NetEase's order. Only the signed-in account's own is
+ * read: NetEase answers -2 (无权限访问) where the asker may not see it, which for one's own ranking
+ * is a request that came without the sign-in (an anonymous one is answered so). It fails like any
+ * other refusal, rather than reading as a ranking with no songs.
+ */
+const readNeteaseListeningRank = async (userId: MediaId, range: ListeningRankRange): Promise<UnifiedSong[]> => {
+    const { type, rows } = NETEASE_LISTENING_RANK[range];
+    const response = await neteaseApi.getUserRecord(toNeteaseId(userId), type);
+    if (isRefusedNeteaseAnswer(response)) throw neteaseAnswerError(response, 'the listening ranking');
+    const list = response?.[rows];
+    if (!Array.isArray(list)) {
+        throw new OnlineProviderError('invalid-response', `NetEase returned no listening ranking (${rows})`, 'netease');
+    }
+    return list
+        .filter((row: any) => row?.song && typeof row.song === 'object')
+        .map((row: any) => withListenCount(normalizeNeteaseSong(row.song), row.playCount));
+};
+
 // The cookie this page keeps is the sign-in. It goes at once, and with it what an older build kept
 // of the account.
 const dropNeteaseSignIn = async (): Promise<void> => {
     removeProviderSessionValue('netease', 'cookie', ['netease_cookie']);
     await removeNeteaseOldAccountCache();
 };
+
+// 最近一次读登录状态时页面里存着的 cookie，没有就是 null。登录失效时只删它（signInRanOut）。
+let cookieAskedWith: string | null = null;
 
 // 扫码的请求没有得到预期的回答时，给日志和失败的那一行：返回码和后端的原话。
 const describeQrResponse = (response: any): string => (
@@ -286,6 +331,7 @@ export const neteaseProvider: OnlineMusicProvider = {
     id: 'netease',
     displayName: 'NetEase Cloud Music',
     shortName: '网易云',
+    shortNameKey: 'onlineProviderName.netease',
     mark: { letter: '云', color: '#dc2626' },
     watch: watchNeteaseLocalService,
     describeFailure: describeNeteaseFailure,
@@ -304,7 +350,9 @@ export const neteaseProvider: OnlineMusicProvider = {
         personalFmModes: true,
         wordByWordLyrics: true,
         userCloud: true,
+        listeningRank: true,
         historyRecommendations: true,
+        dailyStyleRecommendations: true,
         playlistSubscription: true,
         playlistTrackMutations: true,
         likes: true,
@@ -328,6 +376,19 @@ export const neteaseProvider: OnlineMusicProvider = {
             const total = Number(response.result?.songCount || items.length);
             return { items, total, hasMore: offset + items.length < total, nextOffset: offset + items.length };
         },
+        // 专辑和歌单的条目与 `/album`、`/playlist/detail` 读到的同一套字段（2026-10-31 实测），按同样的规则正规化。
+        async searchAlbums(query, limit, offset) {
+            const response = await neteaseApi.cloudSearch(query, limit, offset, 10);
+            const items = (response.result?.albums || []).map((raw: any) => normalizeCollection(raw, 'album'));
+            const total = Number(response.result?.albumCount || items.length);
+            return { items, total, hasMore: items.length > 0 && offset + items.length < total, nextOffset: offset + items.length };
+        },
+        async searchPlaylists(query, limit, offset) {
+            const response = await neteaseApi.cloudSearch(query, limit, offset, 1000);
+            const items = (response.result?.playlists || []).map((raw: any) => normalizeCollection(raw, 'playlist'));
+            const total = Number(response.result?.playlistCount || items.length);
+            return { items, total, hasMore: items.length > 0 && offset + items.length < total, nextOffset: offset + items.length };
+        },
     },
     playback: {
         async getSongDetail(id) {
@@ -335,6 +396,30 @@ export const neteaseProvider: OnlineMusicProvider = {
             const raw = response?.songs?.[0];
             return raw ? normalizeNeteaseSong(raw) : null;
         },
+        // `/song/detail` takes many ids at once. Asked NETEASE_SONG_DETAIL_BATCH at a time, one
+        // request after another; its songs are matched to the ids by id, since it leaves out an id
+        // it has no song by. An id that is no number names no NetEase song: null, without asking.
+        // An answer with another code than 200 (the local backend's 502 where it cannot reach
+        // NetEase, NetEase refusing or limiting the request) says nothing of which songs exist: the
+        // whole call rejects, as getAudioSource does, instead of answering null for every id.
+        async getSongDetails(ids) {
+            const numericIds = ids.map(id => {
+                const numericId = Number(id);
+                return Number.isFinite(numericId) && String(id).trim() !== '' ? numericId : null;
+            });
+            const asked = [...new Set(numericIds.filter((id): id is number => id !== null))];
+            const found = new Map<number, UnifiedSong>();
+            for (let start = 0; start < asked.length; start += NETEASE_SONG_DETAIL_BATCH) {
+                const response = await neteaseApi.getSongDetail(asked.slice(start, start + NETEASE_SONG_DETAIL_BATCH));
+                if (isRefusedNeteaseAnswer(response)) throw neteaseAnswerError(response, 'the song details');
+                for (const raw of response?.songs ?? []) {
+                    const songId = Number(raw?.id);
+                    if (Number.isFinite(songId)) found.set(songId, normalizeNeteaseSong(raw));
+                }
+            }
+            return numericIds.map(id => (id === null ? null : found.get(id) ?? null));
+        },
+        songDetailsPerRequest: NETEASE_SONG_DETAIL_BATCH,
         async getAudioSource(song, quality) {
             const response = await neteaseApi.getSongUrl(toNeteaseId(song.id), mapQuality(quality));
             if (isRefusedNeteaseAnswer(response)) throw neteaseAnswerError(response, 'the song URL');
@@ -409,6 +494,7 @@ export const neteaseProvider: OnlineMusicProvider = {
         getLoginTexts: () => ({ title: 'home.loginTitle', note: 'home.loginNote' }),
         localService: neteaseLocalService,
         async getLoginStatus() {
+            cookieAskedWith = readProviderSessionValue('netease', 'cookie', ['netease_cookie']);
             const loginResponse = await neteaseApi.getLoginStatus();
             throwIfLoginCheckRefused(loginResponse, 'login/status');
             const loginProfile = loginResponse?.data?.profile;
@@ -429,9 +515,8 @@ export const neteaseProvider: OnlineMusicProvider = {
                 return null;
             }
 
-            if (typeof loginResponse?.cookie === 'string' && loginResponse.cookie) {
-                writeProviderSessionValue('netease', 'cookie', loginResponse.cookie);
-            }
+            // 这里不写 cookie：登录状态的回答不带 cookie（上游 login_status 的回答正文里没有），真带了也只会是
+            // 那一次请求的 Set-Cookie，可能没有 MUSIC_U，会盖掉扫码时存下的登录。cookie 只在扫码确认时写（checkLogin）。
             noteLoginStatusCheck(diagnosticLine`signed in (login/status code=${loginCode}, user/account code=${accountCode})`);
             return normalizeUser({ ...loginProfile, ...accountProfile });
         },
@@ -442,9 +527,27 @@ export const neteaseProvider: OnlineMusicProvider = {
             const told = neteaseApi.logout();
             await Promise.all([dropNeteaseSignIn(), told]);
         },
-        signInRanOut: dropNeteaseSignIn,
+        // 登录失效：读登录状态说没有人登录之后（accountRead.ts）。只删那一次问的 cookie，存着的已经换了就不删：
+        // 回答还在路上时扫码登录写下的新 cookie，那个回答说的不是它，留着。
+        async signInRanOut() {
+            if (readProviderSessionValue('netease', 'cookie', ['netease_cookie']) === cookieAskedWith) {
+                await dropNeteaseSignIn();
+                return;
+            }
+            console.log('[NeteaseProvider] The sign-in that ran out was replaced meanwhile: the new cookie stays');
+        },
         showsKeptAccountAtStart: true,
         oldKeptAccount: () => readNeteaseOldAccountCache({ user: normalizeUser, collection: normalizeCollection }),
+        // 旧版本的四份缓存只交出一次：accountRead.ts 把交出的账号存成快照之后才删。留着的话，快照哪一次读不出来，它们又会被
+        // 存成快照，盖掉更新的那一份；先删的话，快照没存上时账号就两处都没了。删不掉不碍事，下次启动有快照，不会再读它们。
+        async forgetOldKeptAccount() {
+            try {
+                await removeNeteaseOldAccountCache();
+                console.log('[NeteaseProvider] The account an older build kept is now the snapshot; its caches are removed');
+            } catch (error) {
+                console.warn('[NeteaseProvider] The caches an older build kept could not be removed:', error);
+            }
+        },
         // 扫码三步：要码（unikey）→ 生成二维码图片 → 检查。没拿到 key 或图片就在那一步失败：空 key 去检查只会
         // 被拒绝，空图片会让登录窗口一直转圈。失败带着网易云的回答（cause），日志里看得到它回了什么。
         async startLogin() {
@@ -542,6 +645,14 @@ export const neteaseProvider: OnlineMusicProvider = {
                 creator: user,
             }, 'cloud');
         },
+        async getListeningRankCollections(user) {
+            const ranked = await Promise.all(LISTENING_RANK_RANGES.map(async range => ({ range, songs: await readNeteaseListeningRank(user.id, range) })));
+            const entries = ranked
+                .filter(({ songs }) => songs.length > 0)
+                .map(({ range, songs }) => listeningRankCollection('netease', user, range, songs));
+            console.info('[NeteaseProvider] Listening ranking read', { entries: entries.map(entry => `${entry.listeningRank}:${entry.trackCount}`) });
+            return entries;
+        },
     },
     catalog: {
         async getPlaylistTracks(id, limit, offset) {
@@ -558,8 +669,19 @@ export const neteaseProvider: OnlineMusicProvider = {
             });
             return { items, total: response?.count, hasMore: Boolean(response?.hasMore), nextOffset: offset + items.length };
         },
+        async getListeningRankTracks(range, limit, offset, collection) {
+            const userId = collection?.creator?.id;
+            if (userId === undefined || userId === null) {
+                throw new OnlineProviderError('invalid-response', 'The listening ranking entry names no user', 'netease');
+            }
+            return listeningRankPage(await readNeteaseListeningRank(userId, range), limit, offset);
+        },
         async getAlbumDetail(id, existingCollection) {
             const response = await neteaseApi.getAlbum(toNeteaseId(id));
+            // A refusing answer (the local backend's 502, NetEase's -462) says nothing of whether the album
+            // is there: it fails, rather than handing back the collection asked with, which an id alone
+            // makes nameless and a caller reads as no such album.
+            if (isRefusedNeteaseAnswer(response)) throw neteaseAnswerError(response, 'the album detail');
             const rawAlbum = response?.album;
             if (!rawAlbum) return existingCollection || null;
 
@@ -594,6 +716,8 @@ export const neteaseProvider: OnlineMusicProvider = {
         },
         async getArtistDetail(id) {
             const response = await neteaseApi.getArtistDetail(toNeteaseId(id));
+            // As for the album: a refusal is a failure, not "no such artist".
+            if (isRefusedNeteaseAnswer(response)) throw neteaseAnswerError(response, 'the artist detail');
             const artist = response?.data?.artist;
             if (!artist) return null;
             return {
@@ -653,6 +777,30 @@ export const neteaseProvider: OnlineMusicProvider = {
                 limitReached: Number(response?.code) === 432,
             };
         },
+        async getDailyStyleGroups() {
+            const response = await neteaseApi.getDailyStyleConfigs();
+            if (isRefusedNeteaseAnswer(response)) throw neteaseAnswerError(response, 'the daily style groups');
+            return (Array.isArray(response?.data?.categorys) ? response.data.categorys : [])
+                .map(normalizeDailyStyleGroup)
+                .filter((group: DailyStyleGroup) => group.id && group.tags.length > 0);
+        },
+        async getDailyStyleSongs() {
+            const response = await neteaseApi.getDailyStyleSongs();
+            if (isRefusedNeteaseAnswer(response)) throw neteaseAnswerError(response, 'the daily style songs');
+            const picked = normalizeDailyStyleGroup(response?.data?.tags);
+            return {
+                songs: (response?.songs || []).map(normalizeNeteaseSong),
+                selection: picked.id && picked.tags.length > 0
+                    ? { groupId: picked.id, tagIds: picked.tags.map(tag => tag.id) }
+                    : null,
+            };
+        },
+        async setDailyStyle(selection) {
+            const response = await neteaseApi.setDailyStyle(Number(selection.groupId), selection.tagIds.map(Number));
+            if (isRefusedNeteaseAnswer(response) || response?.data?.saveSuccess === false) {
+                throw neteaseAnswerError(response, 'the daily style');
+            }
+        },
     },
     // The explore page is in neteaseExplore.ts, which gets this file's normalizers handed in.
     explore: createNeteaseExplore({ song: normalizeNeteaseSong, collection: normalizeCollection }),
@@ -663,11 +811,22 @@ export const neteaseProvider: OnlineMusicProvider = {
         async updatePlaylistTracks(operation, playlist, tracks) {
             const playlistId = typeof playlist === 'object' ? playlist.id : playlist;
             const trackIds = tracks.map(track => typeof track === 'object' ? track.id : track);
-            await neteaseApi.updatePlaylistTracks(operation, toNeteaseId(playlistId), trackIds.map(toNeteaseId));
+            const response = await neteaseApi.updatePlaylistTracks(operation, toNeteaseId(playlistId), trackIds.map(toNeteaseId));
+            // The API answers a refusal (a song already in the playlist, not the owner's list, signed out) with
+            // HTTP 200 and NetEase's own body; a success comes wrapped as { status, body: { code } }.
+            const code = Number(response?.body?.code ?? response?.code);
+            if ([301, 401, 403].includes(code)) {
+                throw new OnlineProviderError('auth-required', 'NetEase refused the playlist change: not signed in', 'netease');
+            }
+            if (code !== 200) {
+                throw new OnlineProviderError('unavailable', `NetEase refused the playlist change: code ${code}`, 'netease');
+            }
         },
         async subscribePlaylist(playlist, subscribed) {
             await neteaseApi.subscribePlaylist(toNeteaseId(typeof playlist === 'object' ? playlist.id : playlist), subscribed);
         },
         async subscribeAlbum(id, subscribed) { await neteaseApi.subscribeAlbum(toNeteaseId(id), subscribed); },
     },
+    // The raw endpoints (Folium experimental platform.raw): the table and the request are in neteaseRaw.ts.
+    raw: neteaseRaw,
 };

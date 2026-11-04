@@ -2,8 +2,8 @@ import type { UnifiedSong } from '../../../types';
 import type { OnlineRecommendationProvider, ProviderCollection } from '../../../types/onlineMusic';
 import { OnlineProviderError } from '../../../types/onlineMusic';
 import { normalizeQqCollection, normalizeQqSong } from './qqNormalize';
-import { hasQqSession, requestQq, type QqOperation } from './qqTransport';
-import { qqRadioCollection } from './qqLists';
+import { hasUsableQqSession, requestQq, type QqOperation } from './qqTransport';
+
 // src/services/onlineMusic/qq/qqRecommendations.ts
 // QQ 音乐的推荐：猜你喜欢（私人 FM）、每日 30 首、推荐歌单。猜你喜欢与推荐歌单是 qq-music-api 3.2.0 加的，每日 30 首是 3.3.0，
 // 出错时用状态码加固定的 errorKey 说明原因：422 是「上游成功但没有数据」，不是网络错误；旧后端没有这些路由，回 404。
@@ -14,9 +14,9 @@ const isEmptyAnswer = (error: unknown): boolean => error instanceof OnlineProvid
     || (error.code === 'network' && error.httpStatus === 422)
 );
 
-/** 读一条回 `{ songs }` 的推荐路由。这几条都要登录：没有会话就不发请求，免得一个 401 把空会话再清一遍。 */
+/** 读一条回 `{ songs }` 的推荐路由。这几条都要登录：没有会话、或会话这次停用（不带）时不发请求，免得白收一个 401。 */
 const loadRecommendedSongs = async (operation: QqOperation): Promise<UnifiedSong[]> => {
-    if (!hasQqSession()) return [];
+    if (!hasUsableQqSession()) return [];
     try {
         const response = await requestQq<any>(operation);
         const songs = Array.isArray(response?.songs) ? response.songs : [];
@@ -57,16 +57,6 @@ const getRecommendedCollections = async (limit: number): Promise<ProviderCollect
             .map((item: unknown) => normalizeQqCollection(item))
             .filter((collection: ProviderCollection) => collection.id !== '' && Boolean(collection.name))
             .slice(0, safeLimit);
-        // 电台分组（GetRadiolist）也作为卡片：这样电台页能看到所有电台，不只是 FM+每日推荐
-        try {
-            const radios = await requestQq<any>('radio_list', {});
-            const radioCards = ((radios?.groups ?? []) as any[])
-                .flatMap(group => Array.isArray(group?.radios) ? group.radios : [])
-                .map(qqRadioCollection)
-                .filter((c): c is ProviderCollection => c !== null && c.id !== 'radio-99');
-            return [...collections, ...radioCards].slice(0, Math.max(safeLimit, radioCards.length ? 40 : safeLimit));
-        } catch { /* 电台列表失败不拖垮歌单卡片 */ }
-        return collections;
     } catch (error) {
         // 首页三块推荐一起取，推荐歌单失败不该连 FM 和日推一起拖下去。
         if (!isEmptyAnswer(error)) console.warn('[QQProvider] recommended-playlists:failed', error);

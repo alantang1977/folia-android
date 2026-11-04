@@ -28,11 +28,3 @@ export const NEW_FEATURES_RELEASE: NewFeaturesRelease = {
         { id: 'moreDetails', icon: Sparkles },
     ],
 };
-
-/** 这组更新说明对应的上游版本号（`releaseNotes.v0_7_22` → `0.7.22`），给版本更新弹窗的副标题用。
- *  fork 自己加的：上游只导出 NEW_FEATURES_RELEASE，这里从 i18nKey 反推版本号。 */
-export const RELEASE_NOTES_VERSION = NEW_FEATURES_RELEASE.i18nKey
-    .split('.')
-    .pop()
-    ?.replace(/^v/, '')
-    .replace(/_/g, '.') ?? null;

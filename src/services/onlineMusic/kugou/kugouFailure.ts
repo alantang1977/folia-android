@@ -60,18 +60,9 @@ export const kugouTransportFailure = (error: unknown): {
 // 酷狗答了话，却没有给地址：最后一个这样的回答的 status 和 error_code 留在 cause 上。
 // 酷狗的文档和代码里都没有说哪个码是要会员、没有版权或者限地区，所以只引不分。`signedOut`：没有登录的账号，
 // 而酷狗只是没给地址：登录后可能能放（文档没说更多，所以只是可能）。
-export const kugouNoUrlError = (
-    answer: { status?: unknown; errorCode?: unknown; error?: unknown; reason?: unknown; message?: unknown } | undefined,
-    signedOut = false,
-): OnlineProviderError => (
+export const kugouNoUrlError = (answer: { status?: unknown; errorCode?: unknown } | undefined, signedOut = false): OnlineProviderError => (
     new OnlineProviderError('not-playable', 'KuGou gave no URL for this song', 'kugou', { ...answer, signedOut })
 );
-
-// Android 扩展层的参考实现自己分过原因（登录 / 会员 / 其它取不到），这些不是酷狗的错误码能说清的。
-const KUGOU_REASON_CASES: Record<string, 'sign-in-needed' | 'subscription-required'> = {
-    login_required: 'sign-in-needed',
-    vip_required: 'subscription-required',
-};
 
 const codeOf = (value: unknown): string | undefined => (
     (typeof value === 'number' && Number.isFinite(value)) || (typeof value === 'string' && value) ? String(value) : undefined
@@ -81,20 +72,9 @@ export const describeKugouFailure = (_operation: OnlineFailureOperation, error: 
     // Web 端的请求是裸 fetch：连不上时它抛 TypeError（Failed to fetch）。别的 TypeError 是读回答时出的错，不是网络。
     if (error instanceof TypeError) return /fetch/i.test(error.message) ? { case: 'unreachable' } : null;
     if (error instanceof OnlineProviderError && error.providerId === 'kugou' && error.code === 'not-playable') {
-        const answer = error.cause as {
-            status?: unknown; errorCode?: unknown; signedOut?: unknown;
-            error?: unknown; reason?: unknown; message?: unknown;
-        } | undefined;
+        const answer = error.cause as { status?: unknown; errorCode?: unknown; signedOut?: unknown } | undefined;
         // errcode 0 是酷狗说没有出错：这时引的是 status。
         const code = (answer?.errorCode === 0 ? undefined : codeOf(answer?.errorCode)) ?? codeOf(answer?.status);
-        // 参考实现（Android 扩展层）会说清是没登录还是要会员：界面照它说，比只说"没有音频"有用。
-        const reason = typeof answer?.reason === 'string' ? answer.reason : '';
-        const named = KUGOU_REASON_CASES[reason];
-        if (named) {
-            // 参考实现写好的那句话（"请在官网重新登录"之类）原样引出来，比只说一句"需要会员"有用。
-            const message = typeof answer?.message === 'string' && answer.message.trim() ? answer.message.trim() : undefined;
-            return { case: named, ...(code ? { code } : {}), ...(message ? { message } : {}) };
-        }
         return { case: 'no-audio', ...(code ? { code } : {}), ...(answer?.signedOut === true ? { likelyCause: 'sign-in' as const } : {}) };
     }
     if (isKugouApiUnloaded(error)) return { case: 'local-service-stopped' };

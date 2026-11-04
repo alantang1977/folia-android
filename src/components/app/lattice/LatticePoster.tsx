@@ -1,13 +1,11 @@
-import { useLatticeSettingsStore } from '../../../stores/useLatticeSettingsStore';
 import { WallTitle } from '../../wall/WallTitle';
-import { useLatticePerformanceModeStore } from '../../../stores/useLatticePerformanceModeStore';
 import { lazy, memo, Suspense, useMemo } from 'react';
 import { motion, type TransformProperties } from 'framer-motion';
 import { ArrowUpRight } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useRef, type KeyboardEvent, type MouseEvent, type MutableRefObject, type PointerEvent } from 'react';
 import type { ReflowTile } from '../../wall/layout';
-import type { LatticeTile } from './latticeModel';
+import { latticeBadgeIsIndex, type LatticeTile } from './latticeModel';
 import { useLatticeChromeDisclosure } from './useLatticeChromeDisclosure';
 import LatticePlaybackControls from './LatticePlaybackControls';
 import { useLatticeExpansionSettled } from './useLatticeExpansionSettled';
@@ -179,9 +177,7 @@ function LatticePoster({
     // The artwork only has to cover the card's own box, and a square cover is scaled to the longer
     // edge. Both inputs are discrete - gears are integer spans and the camera only rescales on a
     // breakpoint - so this is not a per-frame value even while the card animates towards the size.
-    const performanceMode = useLatticePerformanceModeStore(state => state.enabled);
-    const lightsOn = useLatticeSettingsStore(state => state.latticeLightsOn);
-    const coverUrl = useWallPosterArtwork(tile.coverUrl, performanceMode && !expanded ? Math.min(Math.max(rect.width, rect.height) * pixelScale, 512) : Math.max(rect.width, rect.height) * pixelScale);
+    const coverUrl = useWallPosterArtwork(tile.coverUrl, Math.max(rect.width, rect.height) * pixelScale);
     // Hover and press are the last moments before the open: warming here keeps the lyric chunk,
     // the Pixi module and the first shader compile off the click path.
     const warmLyrics = () => { if (isCurrent) prewarmLatticeLyrics(); };
@@ -315,9 +311,11 @@ function LatticePoster({
                 <img className="lattice-poster-cover" src={coverUrl} alt="" draggable={false} decoding="sync" />
             )}
             <span className="lattice-poster-shade" {...(isFlightEnd ? { [MORPH_SHADE_ATTR]: '' } : {})} />
-            {(!performanceMode || !lightsOn) && <span className="lattice-poster-lights-out" />}
-            {!performanceMode && <span className="lattice-poster-tint" />}
-            <span className={`lattice-poster-badge ${isCurrent ? 'is-current' : ''}`}>
+            <span className="lattice-poster-lights-out" />
+            <span className="lattice-poster-tint" />
+            {/* A queue tile's number is is-index: the wall root's has-badge-current-only hides it
+                on all but the playing poster (#930, wall.css). */}
+            <span className={`lattice-poster-badge ${latticeBadgeIsIndex(tile) ? 'is-index' : ''} ${isCurrent ? 'is-current' : ''}`}>
                 {isCurrent && <>{t('home.latticeBadgeNow')} · </>}
                 {/* An entry of the explore page says what it is where a queue tile has its number;
                     a collection, grown, also the heading it stands under on the page. */}

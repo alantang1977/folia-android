@@ -278,9 +278,7 @@ export default async function viteConfig(_config: ConfigEnv): Promise<UserConfig
       icuFoliaDataPlugin(),
       nebbiaStrokesPlugin(),
       react(),
-      // Android APK 构建（FOLIA_DISABLE_PWA=1）禁用 Service Worker：
-      // Capacitor 资产随包分发，SW 只会缓存旧构建、阻碍热更新。
-      ...(process.env.FOLIA_DISABLE_PWA === '1' ? [] : [VitePWA({
+      VitePWA({
         registerType: 'autoUpdate',
         includeAssets: ['icon.svg'],
         devOptions: {
@@ -322,7 +320,7 @@ export default async function viteConfig(_config: ConfigEnv): Promise<UserConfig
             }
           ]
         }
-      })]),
+      })
     ],
     define: {
       '__COMMIT_HASH__': JSON.stringify(commitHash + commitSuffix),

@@ -2,13 +2,6 @@ import { DualTheme } from "../types";
 import { applyStoredAnimationIntensityToDualTheme } from "./themePreferences";
 import { sanitizeDualTheme } from "./themeSanitizer";
 import { getWebAiProvider, type WebAiProvider } from "./runtimeConfig";
-import {
-  canUseNativeAi,
-  generateThemeNative,
-  listModelsNative,
-  testConnectionNative,
-} from './aiAndroid/client';
-import { isNativeBridgeAvailable } from '../audioNative/core';
 export {
   AI_PROVIDER_PRESETS,
   inferAiProviderFromUrl,
@@ -81,11 +74,6 @@ export const generateThemeFromLyrics = async (
     if ((window as any).electron && typeof (window as any).electron.generateTheme === 'function') {
       const dualTheme = await (window as any).electron.generateTheme(lyricsText, options);
       return sanitizeDualTheme(dualTheme);
-    }
-
-    // 安卓：没有 Electron 主进程，也没有部署方的 /api 路由，由 WebView 直连服务商。
-    if (isNativeBridgeAvailable() && canUseNativeAi()) {
-      return await generateThemeNative(lyricsText, options);
     }
 
     const response = await fetch(themeRoute(getWebAiProvider()), {
@@ -185,29 +173,22 @@ export const requestLyricSegmentation = async (lines: string[], signal?: AbortSi
 };
 
 /** Whether model discovery can run here; saved credentials stay in the desktop main process. */
-export const canListAiModels = (): boolean => Boolean(window.electron?.listAiModels) || canUseNativeAi();
+export const canListAiModels = (): boolean => Boolean(window.electron?.listAiModels);
 
 /** Loads the current connection's models without exposing its saved key to the renderer. */
-export const fetchAiModels = async (payload: AiConnectionTestPayload): Promise<AiModelListResult> => {
-  if (window.electron?.listAiModels) return window.electron.listAiModels(payload);
-  if (!canUseNativeAi()) return { ok: false, errorKind: 'config' };
-  try {
-    const models = await listModelsNative();
-    return { ok: true, models } as AiModelListResult;
-  } catch (error) {
-    return { ok: false, errorKind: 'network', message: error instanceof Error ? error.message : String(error) } as AiModelListResult;
-  }
-};
+export const fetchAiModels = (payload: AiConnectionTestPayload): Promise<AiModelListResult> => (
+  window.electron?.listAiModels
+    ? window.electron.listAiModels(payload)
+    : Promise.resolve({ ok: false, errorKind: 'config' })
+);
 
 /** Whether the connection test can run here. It is desktop only: there is no web route for it. */
-export const canRunAiConnectionTest = (): boolean => Boolean(window.electron?.testAiConnection) || canUseNativeAi();
+export const canRunAiConnectionTest = (): boolean => Boolean(window.electron?.testAiConnection);
 
 /**
  * Hands the unsaved values of the settings form to the main process, which sends one "hello" with
  * them and answers with what came back. Only where canRunAiConnectionTest() says yes.
  */
-export const runAiConnectionTest = async (payload: AiConnectionTestPayload): Promise<AiConnectionTestResult> => {
-  if (window.electron?.testAiConnection) return window.electron.testAiConnection(payload);
-  const result = await testConnectionNative();
-  return { ok: result.ok, message: result.message } as unknown as AiConnectionTestResult;
-};
+export const runAiConnectionTest = (payload: AiConnectionTestPayload): Promise<AiConnectionTestResult> => (
+  window.electron!.testAiConnection(payload)
+);

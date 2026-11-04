@@ -65,10 +65,6 @@ export const ModManager: React.FC<ModManagerProps> = ({ classes, isDaylight, the
     // whole panel; combined with pointer-events-none on the overlay it stays steady.
     const dragDepthRef = useRef(0);
     const canInstall = bridgeAvailable && modSystemEnabled;
-    // The desktop takes a dropped zip's path; the Android app has no drag, so it shows a picker
-    // button instead and installs from the file's bytes (src/mods/android/androidModsBridge.ts).
-    const isAndroidInstall = bridgeAvailable && !window.electron?.mods;
-    const installInputRef = useRef<HTMLInputElement>(null);
 
     // The main process loads or unloads every mod when the master switch flips, so the list is
     // re-read then as well as on mount.
@@ -126,29 +122,6 @@ export const ModManager: React.FC<ModManagerProps> = ({ classes, isDaylight, the
             setNotice(result.ok
                 ? { kind: 'ok', text: t('mods.installSuccess', { id: result.id ?? '' }) }
                 : { kind: 'error', text: translateModError(t, result.error, 'install-failed') });
-        } finally {
-            setInstalling(false);
-        }
-    };
-
-    // The Android picker path: unpack the chosen zip and re-read the list.
-    const handlePickZip = async (event: React.ChangeEvent<HTMLInputElement>) => {
-        const file = event.target.files?.[0];
-        event.target.value = '';
-        if (!file) return;
-        if (!file.name.toLowerCase().endsWith('.zip')) {
-            setNotice({ kind: 'error', text: t('mods.errors.install-not-zip') });
-            return;
-        }
-        setInstalling(true);
-        try {
-            const result = await useModsStore.getState().installModFromFile(file);
-            setNotice(result.ok
-                ? { kind: 'ok', text: t('mods.installSuccess', { id: result.id ?? '' }) }
-                : { kind: 'error', text: translateModError(t, result.error, 'install-failed') });
-        } catch (error) {
-            console.warn('[Mods] install from file threw', error);
-            setNotice({ kind: 'error', text: translateModError(t, 'install-failed', 'install-failed') });
         } finally {
             setInstalling(false);
         }
@@ -268,27 +241,6 @@ export const ModManager: React.FC<ModManagerProps> = ({ classes, isDaylight, the
                 </span>
                 <div className="flex flex-wrap items-center gap-1.5">
                     {marketLink}
-                    {isAndroidInstall ? (
-                        <>
-                            <input
-                                ref={installInputRef}
-                                type="file"
-                                accept=".zip,application/zip"
-                                className="hidden"
-                                onChange={(event) => { void handlePickZip(event); }}
-                            />
-                            <button
-                                type="button"
-                                onClick={() => installInputRef.current?.click()}
-                                disabled={installing}
-                                className={`${toolbarButtonClass} ${classes.ghostButton}`}
-                                style={{ color: 'var(--text-primary)' }}
-                            >
-                                <Upload size={12} />
-                                {installing ? t('mods.installing') : t('mods.installZip')}
-                            </button>
-                        </>
-                    ) : null}
                     <button
                         type="button"
                         onClick={() => { void handleOpenDirectory(); }}

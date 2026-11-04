@@ -7,7 +7,6 @@ import VideoLayer from './videoLayer/VideoLayer';
 import VisualizerBackgroundTransition from './styleTransition/VisualizerBackgroundTransition';
 import type { LayerTransition } from './styleTransition/layerTransition';
 import { getSizedCoverUrl } from '../../utils/coverUrl';
-import { useSameOriginCoverUrl } from './backgrounds/useSameOriginCoverUrl';
 import { isMainAppSurface } from '../../utils/appSurface';
 import { FoliumStageLayerSlot } from '../../mods/folium/registries/stageLayers';
 
@@ -68,9 +67,6 @@ export const VisualizerBackdropLayers: React.FC<VisualizerBackdropLayersProps> =
 }) => {
     const staticMode = sharedProps?.staticMode ?? false;
     const paused = sharedProps?.paused ?? false;
-    // The backgrounds below draw the cover's pixels, so on the Android app they get a same-origin
-    // copy of it (useSameOriginCoverUrl); the desktop and the web keep the URL they were given.
-    const backgroundCoverUrl = useSameOriginCoverUrl(sharedProps?.coverUrl);
 
     return (
         <>
@@ -79,7 +75,7 @@ export const VisualizerBackdropLayers: React.FC<VisualizerBackdropLayersProps> =
                     config: sharedProps?.background,
                     theme,
                     isDaylight: sharedProps?.isDaylight ?? false,
-                    coverUrl: getSizedCoverUrl(backgroundCoverUrl, 1024) || undefined,
+                    coverUrl: getSizedCoverUrl(sharedProps?.coverUrl, 1024) || undefined,
                     audioPower,
                     audioBands,
                     seed: sharedProps?.seed,
@@ -96,9 +92,7 @@ export const VisualizerBackdropLayers: React.FC<VisualizerBackdropLayersProps> =
 
             {/* The built-in video layer follows the same rule as stage layers and stays out of the OBS
                 sources, which cannot open the main window's local file handle. */}
-            {/* 视频层不跟随音乐的播放/暂停状态：paused 在主页恒为 true（没有歌在放），
-                跟着它就只剩一帧静止画面。传给它的只表示「整层要静帧」（staticMode / 预览）。 */}
-            {!sharedProps?.isPreviewMode && !staticMode && isMainAppSurface && <VideoLayer paused={false} />}
+            {!sharedProps?.isPreviewMode && !staticMode && isMainAppSurface && <VideoLayer paused={paused} />}
         </>
     );
 };

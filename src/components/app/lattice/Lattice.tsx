@@ -12,7 +12,6 @@ import WallBackButton from '../../wall/WallBackButton';
 import { buildLatticeTiles, type LatticeTile } from './latticeModel';
 import { useStableCallbacks } from '../../../hooks/useStableCallbacks';
 import { useLatticeSettingsStore } from '../../../stores/useLatticeSettingsStore';
-import { useLatticePerformanceModeStore } from '../../../stores/useLatticePerformanceModeStore';
 import { useAppViewStore } from '../../../stores/useAppViewStore';
 import { countRender } from '../../../dev/renderCount';
 import '../../wall/wall.css';
@@ -43,6 +42,8 @@ type LatticeProps = {
     currentSong: SongResult | null;
     playerState: PlayerState;
     currentTime: MotionValue<number>;
+    /** The lyric clock, for the lyric timeline: media time + preview clip start - manual lyric offset. */
+    lyricCurrentTime: MotionValue<number>;
     playbackDuration: number;
     canTogglePlayback: boolean;
     queue: SongResult[];
@@ -69,6 +70,7 @@ export default function Lattice({
     currentSong,
     playerState,
     currentTime,
+    lyricCurrentTime,
     playbackDuration,
     canTogglePlayback,
     queue,
@@ -91,10 +93,10 @@ export default function Lattice({
     const posterTintUseCustomColor = useLatticeSettingsStore(state => state.latticePosterTintUseCustomColor);
     const posterTintColor = useLatticeSettingsStore(state => state.latticePosterTintColor);
     const posterTintIntensity = useLatticeSettingsStore(state => state.latticePosterTintIntensity);
+    const badgeCurrentOnly = useLatticeSettingsStore(state => state.latticeBadgeCurrentOnly);
     // Set by the way the wall was opened, and the same for as long as it is up.
     const isExplore = useAppViewStore(state => state.latticeSource) === 'explore';
     const explore = useExploreWall({ isOn: isExplore, currentSong, providerId: exploreProviderId, accountId: exploreAccountId });
-    const performanceMode = useLatticePerformanceModeStore(state => state.enabled);
     const queueTiles = useMemo(() => buildLatticeTiles({ queue, currentSong }), [currentSong, queue]);
     const tiles = isExplore ? explore.tiles : queueTiles;
     // The tile whose collection page the wall was left for, when this is the way back from that
@@ -188,11 +190,11 @@ export default function Lattice({
     return (
         <LatticeTransportContext.Provider value={transport}>
         <LatticePlaybackProvider actions={controls} currentSong={currentSong} queue={queue} lyrics={lyrics}
-            currentTime={currentTime} duration={playbackDuration} onSeek={onSeek} isDaylight={isDaylight}>
+            currentTime={currentTime} lyricCurrentTime={lyricCurrentTime} duration={playbackDuration} onSeek={onSeek} isDaylight={isDaylight}>
         <LatticeLyricsProvider source={lyricSource} songKey={currentSong ? getPlaybackSongKey(currentSong) : ''}
             keywordColoringEnabled={lyricKeywordColoringEnabled}>
         <section
-            className={`lattice-root lattice-queue-root ${isDaylight ? 'is-daylight' : ''} ${performanceMode ? 'is-performance' : ''} ${vignette ? 'has-vignette' : ''} ${lightsOn ? '' : 'is-lights-out'} ${posterTintEnabled ? 'has-poster-tint' : ''} ${posterTintUseCustomColor ? 'uses-custom-poster-tint' : ''} ${surfaceOff ? 'is-handoff-surface-off' : ''} ${fadesIn && !reducedMotion ? 'is-returning' : ''}`}
+            className={`lattice-root lattice-queue-root ${isDaylight ? 'is-daylight' : ''} ${vignette ? 'has-vignette' : ''} ${lightsOn ? '' : 'is-lights-out'} ${posterTintEnabled ? 'has-poster-tint' : ''} ${posterTintUseCustomColor ? 'uses-custom-poster-tint' : ''} ${badgeCurrentOnly ? 'has-badge-current-only' : ''} ${surfaceOff ? 'is-handoff-surface-off' : ''} ${fadesIn && !reducedMotion ? 'is-returning' : ''}`}
             data-wall-handoff={handoffRole ?? undefined}
             data-wall-handoff-phase={handoffPhase}
             data-wall-handoff-mode={handoffSession?.mode}

@@ -29,7 +29,6 @@ import { useDevicePixelRatio } from '../../../hooks/useMediaQuery';
 import { useReducedMotionFor } from '../../../hooks/useReducedMotionFor';
 import { EXPANSION_SPAN } from '../../wall/blockTemplates';
 import { useLatticeSettingsStore } from '../../../stores/useLatticeSettingsStore';
-import { useLatticePerformanceModeStore } from '../../../stores/useLatticePerformanceModeStore';
 import { resolveWallHandoffRole, useWallHandoffStore } from '../../../stores/useWallHandoffStore';
 import { useLatticeWallHandoff } from './useLatticeWallHandoff';
 import { wallIsLeftForPage } from './wallLayer';
@@ -129,11 +128,7 @@ export default function PosterWall({
     const entranceSuppressed = useWallHandoffStore(state => resolveWallHandoffRole(state.session, 'lattice') === 'in');
     const autoFocusOnSongChange = useLatticeSettingsStore(state => state.autoFocusOnSongChange);
     const devicePixelRatio = useDevicePixelRatio();
-    const performanceMode = useLatticePerformanceModeStore(state => state.enabled);
-    // 性能优先：封面按世界尺寸取档（而不是设备像素），高 DPR 屏上不再为每张卡解一张大一档的图。
-    const pixelScale = performanceMode
-        ? Math.min(cameraScale * devicePixelRatio, 1)
-        : cameraScale * devicePixelRatio;
+    const pixelScale = cameraScale * devicePixelRatio;
 
     const wallLayout = useMemo(
         () => (sections ? createExploreLayout(sections, METRICS) : createQueueLayout(tiles.length, METRICS)),

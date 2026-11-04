@@ -20,7 +20,7 @@ import { errorMessage } from '../../../utils/errorText';
 
 // src/services/onlineMusic/account/accountRead.ts
 // The one function that reads a signed-in account from its platform: who is signed in, their
-// playlists, their cloud entry and their liked song ids, each through the platform's adapter,
+// playlists, their cloud entry, their listening ranking's entries and their liked song ids, each through the platform's adapter,
 // settled in the account store and kept on disk (the snapshot). It knows no platform by name: what
 // one platform does differently is a member of its adapter (`OnlineAuthProvider`,
 // `OnlineLibraryProvider`).
@@ -44,9 +44,12 @@ import { errorMessage } from '../../../utils/errorText';
 //
 // What a part that fails leaves:
 // - Who is signed in could not be asked, or was not answered within WHO_WAIT_MS: the account stays
-//   as shown, marked as failed.
+//   as shown, marked as failed. Where that leaves nobody shown, the account is read again when the
+//   home screen is next entered (`readAtHome`), at most once in a wait that doubles from
+//   HOME_WAIT_MS with each time it could not be asked in a row, up to WHO_RETRY_MAX_MS.
 // - The playlists could not be read: the same, and the liked songs are not read.
 // - The cloud entry could not be read: the one held stays.
+// - The listening ranking could not be read: the entries held stay.
 // - The liked songs could not be read: the hearts stay as they were; the rest is kept.
 // Nobody is signed out by a failure. The account leaves when the platform says nobody is signed
 // in, or refuses the sign-in (`auth-required`); where it is the playlists that were refused, the
@@ -108,6 +111,10 @@ interface PlatformReads {
     playlistsBeganAt: number | null;
     /** The saves of the snapshot, one after another. */
     saving: Promise<unknown>;
+    /** When who is signed in last could not be asked; null once anything has answered since. */
+    whoUnknownAt: number | null;
+    /** How many times in a row who is signed in could not be asked; 0 once anything has answered since. */
+    whoUnknownTimes: number;
 }
 
 // Long enough that going between the home screen, the player and a collection does not read the
@@ -119,6 +126,12 @@ export const HOME_WAIT_MS = 5_000;
 // adapter makes of its own before it asks: NetEase on the desktop waits up to 45 s for its local
 // API to start (netease.ts).
 const WHO_WAIT_MS = 60_000;
+
+// The longest the home screen waits before it reads an account again whose user could not be asked.
+// A platform that cannot answer for the whole run (a sign-in stored that this run cannot unseal)
+// is then asked about once a minute, not at every entry; one that can be reached again comes back
+// within a minute of the next entry.
+const WHO_RETRY_MAX_MS = 60_000;
 
 const PLAYLIST_PAGE_SIZE = 50;
 // A list that never ends is given up here.
@@ -150,7 +163,7 @@ export const createAccountReads = <R>(deps: AccountReadsDeps<R>) => {
     const readsOf = (providerId: OnlineProviderId): PlatformReads => {
         let reads = platforms.get(providerId);
         if (!reads) {
-            reads = { generation: 0, whole: null, playlistsAlone: 0, playlistsBeganAt: null, saving: Promise.resolve() };
+            reads = { generation: 0, whole: null, playlistsAlone: 0, playlistsBeganAt: null, saving: Promise.resolve(), whoUnknownAt: null, whoUnknownTimes: 0 };
             platforms.set(providerId, reads);
         }
         return reads;
@@ -160,19 +173,30 @@ export const createAccountReads = <R>(deps: AccountReadsDeps<R>) => {
 
     // What was kept of a platform's account at the last save, as its adapter reads it now (an
     // adapter with `normalizeUser` / `normalizeCollection` takes what an older build kept). Where
-    // no snapshot is found, what the adapter's build from before the snapshot kept is made one.
+    // no snapshot is found, what the adapter's build from before the snapshot kept is made one;
+    // once it is saved the adapter forgets it, and where the save fails it is kept for the next start.
     const keptAccount = async (provider: OnlineMusicProvider): Promise<ProviderAccountSnapshot | null> => {
         let kept = await loadProviderAccountSnapshot(provider.id).catch(() => null);
-        if (!kept && provider.auth?.oldKeptAccount) {
-            kept = await provider.auth.oldKeptAccount()
-                .then(old => (old ? saveProviderAccountSnapshot(provider.id, old) : null))
+        const auth = provider.auth;
+        if (!kept && auth?.oldKeptAccount) {
+            kept = await auth.oldKeptAccount()
+                .then(async old => {
+                    if (!old) return null;
+                    const saved = await saveProviderAccountSnapshot(provider.id, old);
+                    await auth.forgetOldKeptAccount?.();
+                    return saved;
+                })
                 .catch(() => null);
         }
         if (!kept) return null;
         const user = provider.normalizeUser ? provider.normalizeUser(kept.user) : kept.user;
         if (!user) return null;
+        // The listening ranking's entries are made by listeningRank.ts, not in the platform's shape:
+        // they are kept as they are.
         const collections = provider.normalizeCollection
-            ? kept.collections.map(collection => provider.normalizeCollection!(collection, collection.type)).filter(Boolean)
+            ? kept.collections.map(collection => (collection.type === 'listening_rank'
+                ? collection
+                : provider.normalizeCollection!(collection, collection.type))).filter(Boolean)
             : kept.collections;
         return { ...kept, user, collections };
     };
@@ -209,6 +233,8 @@ export const createAccountReads = <R>(deps: AccountReadsDeps<R>) => {
     // again when the store changes. Then the last save is waited for and what was kept goes.
     const drop = async (providerId: OnlineProviderId, reads: PlatformReads, error: string | undefined, tell: () => unknown): Promise<void> => {
         reads.generation += 1;
+        reads.whoUnknownAt = null;
+        reads.whoUnknownTimes = 0;
         let told: Promise<unknown>;
         try {
             told = Promise.resolve(tell()).then(() => null, messageOf);
@@ -234,6 +260,8 @@ export const createAccountReads = <R>(deps: AccountReadsDeps<R>) => {
         } catch (error) {
             if (reads.generation !== generation) return 'unknown';
             if (!isAuthRequired(error)) {
+                reads.whoUnknownAt = deps.now();
+                reads.whoUnknownTimes += 1;
                 markFailed(provider.id, error);
                 console.warn(`[Account] ${said}: who is signed in could not be asked, the account stays as it is shown: ${messageOf(error)}`);
                 return 'unknown';
@@ -241,6 +269,8 @@ export const createAccountReads = <R>(deps: AccountReadsDeps<R>) => {
             user = null;
         }
         if (reads.generation !== generation) return 'unknown';
+        reads.whoUnknownAt = null;
+        reads.whoUnknownTimes = 0;
         if (user) return user;
         // The platform names nobody, or refuses the sign-in: the account leaves.
         await drop(provider.id, reads, had ? 'auth-required' : undefined, () => provider.auth?.signInRanOut?.());
@@ -351,6 +381,16 @@ export const createAccountReads = <R>(deps: AccountReadsDeps<R>) => {
                 if (!current()) return 'unknown';
                 if (cloud) collections.push(cloud);
             }
+            if (provider.library?.getListeningRankCollections) {
+                let ranks = store().accounts[providerId]?.collections.filter(collection => collection.type === 'listening_rank') ?? [];
+                try {
+                    ranks = await provider.library.getListeningRankCollections(user);
+                } catch (error) {
+                    console.warn(`[Account] ${said}: the listening ranking could not be read, the entries held stay: ${messageOf(error)}`, error);
+                }
+                if (!current()) return 'unknown';
+                collections.push(...ranks);
+            }
             // The playlists show before the liked songs are read: that list may take many requests.
             store().updateAccount(providerId, { status: 'authenticated', user, collections, hydration: 'ready', error: undefined });
 
@@ -424,7 +464,7 @@ export const createAccountReads = <R>(deps: AccountReadsDeps<R>) => {
         }
     };
 
-    return {
+    const accountReads = {
         readPlaylists,
 
         // Reads the account of a platform whole (see the top of this file). Never rejects.
@@ -458,10 +498,19 @@ export const createAccountReads = <R>(deps: AccountReadsDeps<R>) => {
         // while a read of the platform is under way, and not within HOME_WAIT_MS of the last time
         // they were begun to be read; after a failure the next entry reads at once. A read that
         // is refused for the sign-in is checked as in the read of the whole account, so the
-        // account may leave ('ran out'). Never rejects.
+        // account may leave ('ran out'). Where nobody is shown because who is signed in could not
+        // be asked, the account is read whole instead, once for the entry (joining a read under
+        // way), so that it comes back once the platform can be reached; not within HOME_WAIT_MS
+        // of the last time it could not be asked, a wait that doubles with each time in a row, up
+        // to WHO_RETRY_MAX_MS. Never rejects.
         async readAtHome(providerId: OnlineProviderId): Promise<AccountReadOutcome> {
             const provider = getOnlineMusicProvider(providerId);
             const reads = readsOf(providerId);
+            if (provider?.auth && !shownUser(providerId) && reads.whoUnknownAt !== null) {
+                const wait = Math.min(HOME_WAIT_MS * 2 ** Math.max(0, reads.whoUnknownTimes - 1), WHO_RETRY_MAX_MS);
+                if (!reads.whole && deps.now() - reads.whoUnknownAt <= wait) return 'not asked';
+                return accountReads.read(providerId, 'sync');
+            }
             if (!provider?.auth || !shownUser(providerId) || reads.whole || reads.playlistsAlone > 0) return 'not asked';
             if (reads.playlistsBeganAt !== null && deps.now() - reads.playlistsBeganAt <= HOME_WAIT_MS) return 'not asked';
             const generation = reads.generation;
@@ -499,4 +548,5 @@ export const createAccountReads = <R>(deps: AccountReadsDeps<R>) => {
             return whole.liked.then(alike => alike && !begunBefore);
         },
     };
+    return accountReads;
 };

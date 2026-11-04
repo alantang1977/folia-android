@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useRef } from 'react';
 import type { MotionValue } from 'framer-motion';
+import type { LyricRenderScale } from '../../../types';
+import { resolveLyricPixelRatio } from '../../../utils/lyricRenderQuality';
 import { colorWithAlpha } from '../colorMix';
 import { drawPendoloClockwork2d } from './pendoloClockworkDraw2d';
 import {
@@ -52,6 +54,10 @@ export interface PendoloClockworkCanvasProps {
     motionProfile: PendoloMotionProfile;
     /** 智能动感模式's beat effects (usePendoloBeatFx); nothing is drawn or stepped while inactive. */
     beatFxRef?: React.MutableRefObject<PendoloBeatFxShared>;
+    /** 分辨率倍数（#929）：乘在 devicePixelRatio 上，WebGL 和 Canvas2D 两条路都按它；默认 1 是原样。 */
+    renderScale?: LyricRenderScale;
+    /** WebGL 上下文开不开 MSAA（#929，默认开）；变了换一块画布重建上下文。 */
+    antialias?: boolean;
 }
 
 /**
@@ -80,6 +86,8 @@ const PendoloClockworkCanvas: React.FC<PendoloClockworkCanvasProps> = ({
     paused = false,
     motionProfile,
     beatFxRef,
+    renderScale = 1,
+    antialias = true,
 }) => {
     const webglCanvasRef = useRef<HTMLCanvasElement | null>(null);
     const canvas2dRef = useRef<HTMLCanvasElement | null>(null);
@@ -128,6 +136,7 @@ const PendoloClockworkCanvas: React.FC<PendoloClockworkCanvasProps> = ({
         enableLineGlow,
         paused,
         motionProfile,
+        renderScale,
     });
 
     useEffect(() => {
@@ -148,11 +157,12 @@ const PendoloClockworkCanvas: React.FC<PendoloClockworkCanvasProps> = ({
             enableLineGlow,
             paused,
             motionProfile,
+            renderScale,
         };
     }, [
         contentBox, centerX, centerY, baseRadius, lyricRingRadius, audioBass,
         primaryTextColor, accentTextColor, backgroundColor, showGearDecor,
-        showCenterGradient, showCover, coverUrl, enableLineGlow, paused, motionProfile,
+        showCenterGradient, showCover, coverUrl, enableLineGlow, paused, motionProfile, renderScale,
     ]);
 
     useEffect(() => {
@@ -192,6 +202,7 @@ const PendoloClockworkCanvas: React.FC<PendoloClockworkCanvasProps> = ({
         const webglCanvas = webglCanvasRef.current;
         // A renderer belongs to one canvas. Turning every layer off unmounts the canvases, and
         // turning one back on mounts new ones, so a renderer for any other canvas is dropped.
+        // 抗锯齿变了时 WebGL 画布换了 key，也走这里：旧画布已经离开文档，release 把它的上下文还给浏览器。
         if (rendererRef.current && rendererRef.current.canvas !== webglCanvas) {
             rendererRef.current.release();
             rendererRef.current = null;
@@ -201,7 +212,7 @@ const PendoloClockworkCanvas: React.FC<PendoloClockworkCanvasProps> = ({
 
         const attachRenderer = () => {
             if (!webglCanvas || rendererRef.current) return;
-            const created = new PendoloClockworkRenderer(webglCanvas);
+            const created = new PendoloClockworkRenderer(webglCanvas, antialias);
             if (created.isReady) {
                 rendererRef.current = created;
                 useWebglRef.current = true;
@@ -242,9 +253,13 @@ const PendoloClockworkCanvas: React.FC<PendoloClockworkCanvasProps> = ({
             const rawBass = audioBassMotionValue ? audioBassMotionValue.get() : p.audioBass;
             // The gears step on beat_this' beats only while 齿轮随拍 plays; it is retired (2026-10-17),
             // so they keep their own motion, and beat_this does not run for 时计 at all.
-            const beatFx = beatFxRef?.current.active && getBeatEffectStrength(BEAT_EFFECT_IDS.pendoloGearBeats) > 0 ? beatFxRef.current : null;
+            const gearBeats = beatFxRef?.current.active && getBeatEffectStrength(BEAT_EFFECT_IDS.pendoloGearBeats) > 0;
+            // What 仿真鼓面 lights on this canvas - the jewels, the tick and outer dials - is drawn whenever the
+            // effect frame is active, not only under 齿轮随拍: gated on that retired effect, the drumhead's
+            // jewels and dials were never drawn, only its DOM halo and shake (2026-10-18).
+            const beatFx = beatFxRef?.current.active ? beatFxRef.current : null;
             let beatInput: PendoloClockworkBeatInput | null = null;
-            if (beatFx) {
+            if (gearBeats) {
                 const triggers = readPendoloBeatTriggers(beatCounterRef.current, beatTriggersRef.current);
                 beatInput = beatInputRef.current;
                 beatInput.beats = triggers.beats;
@@ -318,7 +333,8 @@ const PendoloClockworkCanvas: React.FC<PendoloClockworkCanvasProps> = ({
                 animationFrameId = window.requestAnimationFrame(render);
                 return;
             }
-            const dpr = window.devicePixelRatio || 1;
+            // 分辨率（#929）：原来的像素密度（devicePixelRatio）当底，乘上倍数；渲染器按变了的尺寸就地换缓冲
+            const dpr = resolveLyricPixelRatio(window.devicePixelRatio || 1, p.renderScale);
 
             const renderer = rendererRef.current;
             if (useWebglRef.current && !renderer?.isReady) useWebglRef.current = false;
@@ -382,7 +398,7 @@ const PendoloClockworkCanvas: React.FC<PendoloClockworkCanvasProps> = ({
             webglCanvas?.removeEventListener('webglcontextlost', handleContextLost);
             webglCanvas?.removeEventListener('webglcontextrestored', handleContextRestored);
         };
-    }, [showGearDecor, showCenterGradient, showCover, audioBassMotionValue, escapementAngleMotionValue, beatFxRef]);
+    }, [showGearDecor, showCenterGradient, showCover, audioBassMotionValue, escapementAngleMotionValue, beatFxRef, antialias]);
 
     useEffect(() => () => {
         rendererRef.current?.release();
@@ -408,7 +424,9 @@ const PendoloClockworkCanvas: React.FC<PendoloClockworkCanvasProps> = ({
 
     return (
         <div className="absolute pointer-events-none" style={boxStyle}>
+            {/* 上下文属性跟着画布走：抗锯齿变了换一块新画布 */}
             <canvas
+                key={antialias ? 'msaa' : 'plain'}
                 ref={webglCanvasRef}
                 className={canvasClass}
                 style={{ filter: lineGlow }}

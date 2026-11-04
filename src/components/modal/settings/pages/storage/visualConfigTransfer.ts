@@ -2,6 +2,7 @@ import { applyVisualizerTuningsToSettings } from '../../../../visualizer/tuningR
 import { importFoliumParams, snapshotFoliumParams } from '../../../../../mods/params/paramStore';
 import { buildVisualSettingsConfig } from '../../../../../services/obs/visualSettingsConfig';
 import { isThemeGenerationSource, type ThemeGenerationSource } from '../../../../../services/themePreferences';
+import { useLatticeSettingsStore } from '../../../../../stores/useLatticeSettingsStore';
 import { useLibraryWallLookStore } from '../../../../../stores/useLibraryWallLookStore';
 import { usePlayerChromeSettingsStore } from '../../../../../stores/usePlayerChromeSettingsStore';
 import { useStageSettingsStore } from '../../../../../stores/useStageSettingsStore';
@@ -15,6 +16,7 @@ import { parseSubtitleOverlayLayout } from '../../../../../utils/lyrics/subtitle
 import { ACTIVATE_CUSTOM_THEME_KEY, buildImportPlan, THEME_DARK_KEY, THEME_LIGHT_KEY, type ImportPlan } from '../../../../../utils/appearanceImportPlan';
 import { isFontFamilyAvailable } from '../../../../../utils/fontAvailability';
 import { isLibraryWallSeamStyle } from '../../../../../utils/libraryWallSeamStyle';
+import { isLibraryWallSeamDirection } from '../../../../../utils/libraryWallSeamDirection';
 import { extractCfgFromInput } from '../../../../../utils/obsUrl';
 import { mergeUrlBackgroundList } from '../../../../../utils/urlBackground';
 
@@ -126,7 +128,10 @@ export const applyImportedConfig = (config: any, keys: string[], theme: ConfigTh
 
     // 2. Restore Visualizer Setup
     if (has('visualizerMode') && config.visualizerMode) {
-        storeVisualizer.handleSetVisualizerMode(config.visualizerMode);
+        storeVisualizer.handleSetVisualizerMode(config.visualizerMode, { preserveRandom: true });
+    }
+    if (has('randomVisualizerModes')) {
+        storeVisualizer.handleSetRandomVisualizerModes(config.randomVisualizerModes);
     }
     if (has('randomVisualizerModePerSong')) {
         storeVisualizer.handleToggleRandomVisualizerModePerSong(Boolean(config.randomVisualizerModePerSong));
@@ -326,7 +331,10 @@ export const applyImportedConfig = (config: any, keys: string[], theme: ConfigTh
     if (has('stageTrackPillOnHome')) {
         storeStageSettings.handleToggleStageTrackPillOnHome(Boolean(config.stageTrackPillOnHome));
     }
-    // The bravais wall: the collections' stack edges, the seam's material and the picture behind
+    if (has('stageTrackPillInObs')) {
+        storeStageSettings.handleToggleStageTrackPillInObs(Boolean(config.stageTrackPillInObs));
+    }
+    // The bravais wall: the collections' stack edges, the seam's material and direction, and the picture behind
     // the wall, through the setters the Bravais group on the 主页与歌单 page uses. The seam style
     // is taken only when it is a known preset, as the import plan's guard does.
     const storeLibraryWall = useLibraryWallLookStore.getState();
@@ -344,5 +352,12 @@ export const applyImportedConfig = (config: any, keys: string[], theme: ConfigTh
     }
     if (has('libraryWallBackdropBlur')) {
         storeLibraryWall.setBackdropBlur(Boolean(config.libraryWallBackdropBlur));
+    }
+    if (has('libraryWallSeamDirection') && isLibraryWallSeamDirection(config.libraryWallSeamDirection)) {
+        storeLibraryWall.setSeamDirection(config.libraryWallSeamDirection);
+    }
+    // Numbering only the playing song, on both tile walls (the 播放页 page's tile wall group writes it).
+    if (has('latticeBadgeCurrentOnly')) {
+        useLatticeSettingsStore.getState().handleToggleLatticeBadgeCurrentOnly(Boolean(config.latticeBadgeCurrentOnly));
     }
 };

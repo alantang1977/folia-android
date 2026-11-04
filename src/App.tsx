@@ -6,10 +6,11 @@ import { loadCachedOrFetchCover } from './services/coverCache';
 import VisualizerRenderer from './components/visualizer/VisualizerRenderer';
 import CommandPalette from './components/command-palette/CommandPalette';
 import AddToPlaylistHost from './components/app/AddToPlaylistHost';
+import ScratchpadHost from './components/app/scratchpad/ScratchpadHost';
+import { useScratchpadPlayback, useScratchpadQueuePort } from './components/app/scratchpad/useScratchpadPlayback';
 import { useCommandPalette } from './components/command-palette/useCommandPalette';
 import { useCommandPaletteContext } from './hooks/useCommandPaletteContext';
 import { useReducedMotionFor } from './hooks/useReducedMotionFor';
-import { useNativeBackButton } from './hooks/useNativeBackButton';
 import AppShell from './components/app/AppShell';
 import Home from './components/app/Home';
 import PlayerPanel from './components/app/PlayerPanel';
@@ -33,8 +34,6 @@ import LegacyModelsPrompt from './components/modal/LegacyModelsPrompt';
 import { PlaybackEntryViewPrompt } from './components/modal/playback-entry-view/PlaybackEntryViewPrompt';
 import { LatticeFmNotice } from './components/modal/playback-entry-view/LatticeFmNotice';
 import { useStartupExperienceGate } from './hooks/useStartupExperienceGate';
-import { useSiteUpdateCheck } from './hooks/useSiteUpdateCheck';
-import SiteUpdateDialog from './components/modal/SiteUpdateDialog';
 import { useAppDialogsModel } from './components/app/dialogs/useAppDialogsModel';
 import { useHomeModel } from './components/app/home/useHomeModel';
 import { createLyricFilterPatternSaver } from './components/app/home/createLyricFilterPatternSaver';
@@ -67,6 +66,7 @@ import { isWallLibrarySuite, useActiveLibrarySuiteId } from './library/app/libra
 import {
     createSearchAlbumCollection,
     createSearchArtistCollection,
+    createSearchResultCollection,
 } from './components/app/search/searchCollectionAdapters';
 import { usePlayerPanelModel } from './components/app/player-panel/usePlayerPanelModel';
 import { createQueueMutations } from './components/app/player-panel/createQueueMutations';
@@ -78,7 +78,6 @@ import type { MediaId, OnlineProviderId, ProviderCollection } from './types/onli
 import { resolveSongCatalogRef } from './services/onlineMusic/catalogRefs';
 import { omni } from './services/onlineMusic/omni';
 import { consumeProgrammaticPause, playbackFade } from './services/playbackFade';
-import { applyNativeWindowSurface } from './svc/nativeWindowSurface';
 import { getSongArtistLabel, getSongCoverUrl } from './services/onlineMusic/songMetadata';
 import { isNavidromeEnabled } from './services/navidromeService';
 import { useAppNavigation } from './hooks/useAppNavigation';
@@ -92,6 +91,10 @@ import { resolveActiveProviderSummary } from './library/core/account/accountRule
 import { useAppPreferences } from './hooks/useAppPreferences';
 import { useElectronPlaybackBridge } from './components/app/playback/bridges/useElectronPlaybackBridge';
 import { useHifiPlaybackBridge } from './components/hifi/useHifiPlaybackBridge';
+import { useExternalPlaybackBridge } from './components/app/playback/bridges/useExternalPlaybackBridge';
+import { useExternalAutomixGate } from './components/app/playback/externalPlaybackGate';
+import { seekExternalPlayback } from './services/onlineMusic/externalPlayback';
+import { seekExternalSongIfNotLoaded, startExternalSong } from './components/app/playback/start/externalSongStart';
 import { seekHifiRoute } from './components/hifi/hifiRouteTransport';
 import { useHifiAutomixGate } from './components/hifi/useHifiAutomixGate';
 import { useWebEngineYield } from './components/hifi/useWebEngineYield';
@@ -102,6 +105,8 @@ import { isHifiRoute, useHifiTrackStore } from './services/hifi/hifiPlayback';
 import { hifiEngine } from './services/hifi/hifiEngine';
 import { selectHifiEngineConfig, useHifiSettingsStore } from './stores/useHifiSettingsStore';
 import { useElectronDisplaySleepBlocker } from './hooks/useElectronDisplaySleepBlocker';
+import { useBackgroundLyricHold } from './components/app/backgroundThrottling/useBackgroundLyricHold';
+import { readLiveLyricTime, useBackgroundLyricHoldStore } from './components/app/backgroundThrottling/backgroundLyricHoldStore';
 import { useSleepTimer } from './hooks/useSleepTimer';
 import { useProviderNotices } from './components/app/useProviderNotices';
 import { useLocalLibraryAutoScan } from './hooks/useLocalLibraryAutoScan';
@@ -109,6 +114,7 @@ import { useElectronVideoExportController } from './hooks/useElectronVideoExport
 import { useElectronWindowPlaybackHandoff } from './components/app/playback/restore/useElectronWindowPlaybackHandoff';
 import { useMediaSessionBridge } from './hooks/useMediaSessionBridge';
 import { usePlayerChromeAutoHide } from './hooks/usePlayerChromeAutoHide';
+import { useMacWallpaperHitRegions } from './hooks/useMacWallpaperHitRegions';
 import { useIdleCursorHide } from './hooks/useIdleCursorHide';
 import { usePlaybackAudioBridge } from './components/app/playback/bridges/usePlaybackAudioBridge';
 import { useTranscodeFallback } from './hooks/useTranscodeFallback';
@@ -160,7 +166,6 @@ import { selectSleepTimerSnapshot, useSleepTimerStore } from './stores/useSleepT
 import { selectStageSettingsSnapshot, useStageSettingsStore } from './stores/useStageSettingsStore';
 import { selectAudioSettingsSnapshot, useAudioSettingsStore } from './stores/useAudioSettingsStore';
 import { useSettingsModalStore } from './stores/useSettingsModalStore';
-import { useAppUpdatePromptStore } from './stores/useAppUpdatePromptStore';
 import { audioBands, audioPower, bass, currentTime, lowMid, lyricCurrentTime, mid, spectrum, treble, vocal } from './stores/motionSignals';
 import { useAppChromeStore } from './stores/useAppChromeStore';
 import { useAppViewStore } from './stores/useAppViewStore';
@@ -174,12 +179,12 @@ import { useWallHandoffStore } from './stores/useWallHandoffStore';
 import { countRender } from './dev/renderCount';
 import { resolveSongLiked } from './utils/resolveSongLiked';
 import StageSessionEmptyState from './components/app/stage/StageSessionEmptyState';
+import { useStagePlayerSearchBridge } from './components/app/stage/useStagePlayerSearchBridge';
 import { useVisualizerRendererModel } from './components/visualizer/useVisualizerRendererModel';
 import { useVisualizerTunings } from './components/visualizer/useVisualizerTunings';
 import { usePlaybackRuntimeRefs } from './components/app/playback/usePlaybackRuntimeRefs';
 import { useElectronWindowChrome } from './hooks/useElectronWindowChrome';
-import { useTransportCommandRefs } from './components/app/playback/bridges/useTransportCommandRefs';
-import { useNativeMediaActions } from './hooks/useNativeMediaActions';
+import { runTransportButtonAction, useTransportCommandRefs } from './components/app/playback/bridges/useTransportCommandRefs';
 import { useAccountReads } from './hooks/useAccountReads';
 import { useAudioOutputDevice } from './hooks/useAudioOutputDevice';
 import { useThemeQuickEditorContext } from './hooks/useThemeQuickEditorContext';
@@ -187,8 +192,8 @@ import { usePlayerBottomBarOffset } from './hooks/usePlayerBottomBarOffset';
 import { usePlayerBottomBarPositioningEntry } from './hooks/usePlayerBottomBarPositioningEntry';
 import { PlayerBottomBarLayoutContext } from './components/floating-player/PlayerBottomBarLayoutContext';
 import { useFoliumHostBridge } from './mods/runtime/hostBridge';
-import { refreshPrefetchAfterQueueEdit } from './services/prefetchService';
 import { useFoliumHostActions } from './mods/runtime/hostActions';
+import { refreshPrefetchAfterQueueEdit } from './services/prefetchService';
 import { FoliumStageLayerSlot } from './mods/folium/registries/stageLayers';
 import { errorFields } from './utils/errorText';
 import { runsOnWindows } from './utils/platform';
@@ -316,17 +321,13 @@ export default function App() {
     // The analysis worker keeps htdemucs loaded while automix can ask for it, and releases it the
     // moment it cannot - the switch off, or the crossfade mode, which reads no model. Sent on mount
     // too: the main process starts out assuming off. See electron/analysis/host.cjs.
+    // (From the PR #750 re-review, 2026-10-19: it no longer keeps htdemucs while automix can ask - it
+    // releases it a minute after each run - but the moment automix cannot still releases it at once.)
     useEffect(() => {
         window.electron?.setAutomixEnabled?.(automixEnabled && transitionMode === 'automix');
     }, [automixEnabled, transitionMode]);
 
     const startupExperience = useStartupExperienceGate();
-    // 问站点有没有新版本；读不到或本机已是最新就静默结束。
-    useSiteUpdateCheck();
-    const siteUpdateVersion = useAppUpdatePromptStore(state => state.pendingVersion);
-    const dismissSiteUpdate = useCallback(() => {
-        useAppUpdatePromptStore.setState({ pendingVersion: null, pendingNotes: '', pendingDownloadUrl: '' });
-    }, []);
 
     useEffect(() => initializeSyncCoordinator(), []);
 
@@ -442,6 +443,8 @@ export default function App() {
         preventDisplaySleepDuringPlayback,
         wallpaperMode,
     } = useDesktopSettingsStore(useShallow(selectDesktopSettingsSnapshot));
+    // macOS wallpaper mode: click catchers over the controls, so Stage Manager ignores those clicks.
+    useMacWallpaperHitRegions(wallpaperMode);
     const {
         stageTrackPillMode,
         stageTrackPillOnHome,
@@ -506,6 +509,9 @@ export default function App() {
         preventDisplaySleepDuringPlayback,
         playerState === PlayerState.PLAYING,
     );
+    useBackgroundLyricHold();
+    // The app.overlay mod layers read the same lyric clock and line the hold keeps still: paused with it.
+    const backgroundLyricHeld = useBackgroundLyricHoldStore(state => state.held);
 
     const visualizerTunings = useVisualizerTunings();
 
@@ -533,8 +539,8 @@ export default function App() {
     useRandomVisualizerMode({
         currentSong,
         enabled: randomVisualizerModePerSong,
-        visualizerMode,
         modes: randomVisualizerModes,
+        visualizerMode,
         setVisualizerMode: handleSetVisualizerMode,
     });
 
@@ -729,8 +735,6 @@ export default function App() {
         popCollectionTo,
         backCollection,
     } = useAppNavigation();
-    // 手机端的返回（手势 / 三键）先关弹窗与面板，再沿应用历史一层层退回，回到主界面才退出程序。
-    useNativeBackButton();
     const reduceLatticeMotion = useReducedMotionFor('lattice');
     const visualizerAroundWall = useVisualizerAroundWall();
 
@@ -776,7 +780,7 @@ export default function App() {
         omni.getProviderSummaries().map(({ providerId }) => [providerId, async () => await omni.readAccount(providerId, 'sync') === 'read']),
     ), []);
     // 在线账户 controller（Library v2 · A4）：登录、选平台、切换确认与登出都在 core，App 只交出退出与退出前的那一问
-    // （useProviderSignOut），以及换平台时清空播放器的端口。端口读的句柄都是稳定引用，建一次。
+    // （useProviderSignOut），以及平台换了时的播放器端口（切换退出私人 FM，退出登录移出那个平台的歌）。端口读的句柄都是稳定引用，建一次。
     const { confirmLogout, signOut, dialog: signOutDialog } = useProviderSignOut();
     const [providerSwitchCleanup] = useState(() => createLibraryAccountSwitchCleanupPort(() => ({
         audioRef,
@@ -924,12 +928,12 @@ export default function App() {
         onRefreshLocalSongs,
         isLocalSongLiked,
         saveCurrentQueueAsLocalPlaylist,
-        addCurrentSongToLocalPlaylist,
-        createCurrentLocalPlaylist,
-        addCurrentSongToOnlinePlaylist,
-        createCurrentOnlinePlaylist,
-        addCurrentSongToNavidromePlaylist,
-        createCurrentNavidromePlaylist,
+        addPickedSongsToLocalPlaylist,
+        createLocalPlaylistWithSongs,
+        addPickedSongsToOnlinePlaylist,
+        createOnlinePlaylistWithSongs,
+        addPickedSongsToNavidromePlaylist,
+        createNavidromePlaylistWithSongs,
         loadCurrentSongLyricPreview,
         handleLocalQueueAdd,
         onPlayLocalSong,
@@ -998,7 +1002,7 @@ export default function App() {
         setLyricsStable,
     ]);
 
-    const { addNavidromeSongsToQueue, applyQueueBatchOperation, removeQueueSong, moveQueueSongToEnd, moveQueueSongToNext, moveQueueSong } = useMemo(() => createQueueMutations({
+    const { setQueueOrder, addNavidromeSongsToQueue, applyQueueBatchOperation, removeQueueSong, moveQueueSongToEnd, moveQueueSongToNext, moveQueueSong } = useMemo(() => createQueueMutations({
         currentSong,
         playQueue,
         persistLastPlaybackCache,
@@ -1105,6 +1109,9 @@ export default function App() {
         }
         setStatusMsg({ type: 'error', text: t('search.catalogUnavailable') });
     }, [navigateToCollection, setStatusMsg, t]);
+    const handleSearchResultCollectionOpen = useCallback((collection: ProviderCollection) => {
+        navigateToCollection(createSearchResultCollection(collection), 'search');
+    }, [navigateToCollection]);
 
     usePlaybackUiEffects({
         statusMsg,
@@ -1141,13 +1148,15 @@ export default function App() {
 
     // mpv is not one of the two decks a blend needs: off while this song or the next one plays on HiFi.
     const hifiBlocksAutomix = useHifiAutomixGate();
+    // Nor does a provider's own player have a deck to blend into.
+    const externalBlocksAutomix = useExternalAutomixGate();
     const automix = useAutomixDecks({
         audioRef,
         audioContextRef,
         currentSongKeyRef: currentSongRef,
         coverUrl,
         loopMode: effectiveLoopMode,
-        isEnabled: automixEnabled && !isNowPlayingStageActive && !hifiBlocksAutomix,
+        isEnabled: automixEnabled && !isNowPlayingStageActive && !hifiBlocksAutomix && !externalBlocksAutomix,
         transition: transitionSettings,
         onAdvanceTrack: () => {
             // Same advance the end of a track would trigger, only early enough for the outgoing
@@ -1347,6 +1356,7 @@ export default function App() {
         syncOutputGain,
         getTargetPlaybackVolume,
         getCoverUrl,
+        isTransitionAudible: automix.isTransitionAudible,
     });
 
     const handleTranscodeFallback = useTranscodeFallback({
@@ -1397,8 +1407,10 @@ export default function App() {
         syncStageLyricsClock,
         pauseDuringTransition: handlePauseDuringTransition,
         isTransitionAudible: automix.isTransitionAudible,
+        startExternalSong: () => startExternalSong(playSong),
     });
     useHifiPlaybackBridge({ handleNextTrack, playSong, shouldAutoPlayRef: shouldAutoPlay, isLyricsLoading, effectiveLoopMode, isFmMode });
+    useExternalPlaybackBridge({ handleNextTrack });
     useNavidromeScrobbleReporter({
         audioRef,
         currentSong,
@@ -1415,6 +1427,7 @@ export default function App() {
         activeDeck: automix.activeDeck,
     });
 
+    const transportCommandRefs = useTransportCommandRefs({ resumePlayback, pausePlayback, handlePrevTrack, handleNextTrack });
     const {
         mediaSessionPlayRef,
         mediaSessionPauseRef,
@@ -1422,7 +1435,7 @@ export default function App() {
         mediaSessionNextRef,
         taskbarHasTrackRef,
         taskbarPlayerStateRef,
-    } = useTransportCommandRefs({ resumePlayback, pausePlayback, handlePrevTrack, handleNextTrack });
+    } = transportCommandRefs;
 
     const mediaSessionOptions = {
         audioRef,
@@ -1461,6 +1474,8 @@ export default function App() {
         pausePlayback,
         resumePlayback,
     });
+
+    useStagePlayerSearchBridge();
 
     const {
         publishStagePlayerPlaybackUpdate,
@@ -1569,19 +1584,6 @@ export default function App() {
         defaultTheme: DEFAULT_THEME,
         transparentBackground: shouldUseTransparentAppBackground,
     }), [bgMode, isDaylight, shouldUseTransparentAppBackground, theme]);
-    // 原生窗口 / WebView 的底色跟着主题走。挖孔屏、异形屏顶部那条**不属于页面内容**的带子
-    // 画的就是窗口底色，而它以前写死近黑（styles.xml + capacitor.config.json 都是 #09090b），
-    // 浅色主题下就是顶部一条黑带。页面透明（播放页）时只刷窗口，别把透明刷成实色。
-    const appBackgroundColor = String(
-        (appStyle as { [key: string]: unknown })['--bg-color'] ?? '',
-    );
-    useEffect(() => {
-        if (!appBackgroundColor) return;
-        applyNativeWindowSurface(
-            appBackgroundColor,
-            shouldUseTransparentAppBackground ? undefined : appBackgroundColor,
-        );
-    }, [appBackgroundColor, shouldUseTransparentAppBackground]);
     const { visualizerTheme, visualizerSubtitleTheme, visualizerGeometrySeed } = useMemo(() => buildVisualizerTheme({
         appStyle,
         theme,
@@ -1642,10 +1644,12 @@ export default function App() {
         duration,
         playbackRoute,
         hasHifiTrack,
+        hasExternalSong: Boolean(currentSong && omni.canPlayExternally(currentSong)),
     }), [
         activePlaybackContext,
         audioSrc,
         currentView,
+        currentSong,
         disableHomeDynamicBackground,
         duration,
         hasHifiTrack,
@@ -1674,8 +1678,10 @@ export default function App() {
         refreshObsBrowserSourceStatus,
     } = useObsBrowserSourcePublisher({
         isElectronWindow,
+        audioRef,
+        getDisplayAudioElement: automix.getDisplayElement,
         stageSource,
-        coverUrl,
+        coverUrl: displayCoverUrl,
         offsetMs: effectiveLyricTimelineOffsetMs,
         theme: visualizerTheme,
         subtitleTheme: visualizerSubtitleTheme,
@@ -1689,6 +1695,7 @@ export default function App() {
         isElectronWindow,
         lyrics,
         offset: effectiveLyricTimelineOffsetMs,
+        audioSrc,
     });
     const canGenerateAITheme = Boolean((lyrics?.lines.length ?? 0) > 0 || currentSong?.isPureMusic);
     const generateCurrentSongTheme = useCallback(() => {
@@ -2016,6 +2023,8 @@ export default function App() {
      * the live song, queue-mode and blend state.
      */
     seekDuringTransitionRef.current = (time: number) => {
+        // External route: the provider's player seeks; the bar's seek also resumes, as on mpv.
+        if (seekExternalPlayback(time, { resume: true })) return true;
         // HiFi route: mpv seeks. Arrow keys and the remote seek mpv before this, so it is seekMainAudio's and resumes.
         if (seekHifiRoute(time, { resume: true })) return true;
         const tailElement = cancelBlendToDisplayedTrack(true);
@@ -2044,6 +2053,9 @@ export default function App() {
         tailElement.pause();
         return true;
     };
+    // The newest play path, for a seek on a song whose external player has nothing loaded yet.
+    const latestPlaySongRef = useRef(playSong);
+    latestPlaySongRef.current = playSong;
     const seekMainAudio = useCallback((time: number) => {
         // A seek is a statement that playback should go on, same as it is on a paused track. If a
         // pause is still fading out, take it back (the audio never stopped) so the pending pause
@@ -2055,6 +2067,9 @@ export default function App() {
         if (seekDuringTransitionRef.current(time)) {
             return;
         }
+        // The song on screen belongs to a provider's own player, but nothing is loaded there yet
+        // (a session restore): a seek starts it at that position, as it resumes a deck on the web route.
+        if (seekExternalSongIfNotLoaded(time, latestPlaySongRef.current)) return;
         if (audioRef.current) {
             audioRef.current.currentTime = time;
             if (audioRef.current.paused) {
@@ -2065,22 +2080,13 @@ export default function App() {
         }
     }, [publishStagePlayerPlaybackUpdate]);
 
-    // Android 媒体通知按钮 / 蓝牙耳机键：把原生 mediaAction 派发到播放控制
-    useNativeMediaActions({
-        play: resumePlayback,
-        pause: pausePlayback,
-        toggle: () => togglePlay(),
-        next: () => { void handleNextTrack(); },
-        previous: () => { void handlePrevTrack(); },
-        seek: (seconds: number) => { seekMainAudio(seconds); },
-    });
-
     const handleMonetLyricLineSeek = useCallback((lyricTimeSec: number) => {
         if (isNowPlayingControlDisabled) {
             return;
         }
 
-        const playbackTime = Math.max(0, lyricTimeSec + currentTime.get() - lyricCurrentTime.get());
+        // Not lyricCurrentTime itself: 后台节流 holds that still while the window is hidden and playback runs on.
+        const playbackTime = Math.max(0, lyricTimeSec + currentTime.get() - readLiveLyricTime());
         if (activePlaybackContext === 'stage' && stageActiveEntryKind === 'lyrics' && !audioSrc) {
             syncStageLyricsClock(playbackTime, duration, playerState, stageLyricsClockRef.current.startTimeSec);
             currentTime.set(playbackTime);
@@ -2236,6 +2242,8 @@ export default function App() {
         onPopCollectionTo: popCollectionTo,
         onBackCollection: backCollection,
     });
+    const scratchpadPlayback = useScratchpadPlayback(homeModel.surfaceProps, handleQueueAddAndPlay);
+    const scratchpadQueue = useScratchpadQueuePort(playSong, setQueueOrder);
     const playerDisplayCatalogIndex = useMemo(() => buildLocalLibraryIndex(
         localLibraryCatalog.entities,
         localLibraryCatalog.assignments,
@@ -2254,10 +2262,6 @@ export default function App() {
             ? applyLocalLibraryEntityDisplay(track, localLibraryCatalog, playerDisplayCatalogIndex)
             : track
     ), [localLibraryCatalog, playerDisplayCatalogIndex]);
-    const onlinePlaylists = useMemo(() => {
-        return playerDisplayCurrentSong ? omni.getPlaylistsForSong(playerDisplayCurrentSong) : [];
-    }, [onlineProviders, playerDisplayCurrentSong]);
-
     const playerPanelModel = usePlayerPanelModel({
         navigateToHome,
         navigateToLattice,
@@ -2325,7 +2329,9 @@ export default function App() {
         handleSearchResultAddToQueue,
         handleSearchResultArtistOpen,
         handleSearchResultAlbumOpen,
+        handleSearchResultCollectionOpen,
         resolveSearchResultDisplay,
+        hasLocalSongs: localSongs.length > 0,
         devDebugSnapshot,
         effectiveLoopMode,
         canToggleCurrentPlayback,
@@ -2462,7 +2468,6 @@ export default function App() {
     const renderAudioDeck = (deck: AutomixDeckId, register: (element: HTMLAudioElement | null) => void) => (
         <audio
             key={deck}
-            data-folia-main-audio="1"
             ref={register}
             data-playback-deck={deck}
             src={playbackRoute === 'hifi' ? undefined : automix.deckSrc(deck)}
@@ -2762,6 +2767,7 @@ export default function App() {
                     void window.electron?.setMainWindowClickThroughUnlockHover?.(false);
                 }
             }}
+            onClickThroughTransportAction={(action) => runTransportButtonAction({ ...transportCommandRefs, isNowPlayingControlDisabledRef, audioRef }, action)}
             audioElement={<>
                 {renderAudioDeck('A', automix.registerDeckA)}
                 {renderAudioDeck('B', automix.registerDeckB)}
@@ -2840,6 +2846,7 @@ export default function App() {
                                 currentSong={displaySong}
                                 playerState={displayPlayerState}
                                 currentTime={currentTime}
+                                lyricCurrentTime={lyricCurrentTime}
                                 playbackDuration={displayDuration}
                                 canTogglePlayback={canToggleCurrentPlayback}
                                 queue={playQueue}
@@ -2898,7 +2905,7 @@ export default function App() {
                 slot="app.overlay"
                 theme={theme}
                 isDaylight={isDaylight}
-                paused={displayPlayerState !== PlayerState.PLAYING}
+                paused={displayPlayerState !== PlayerState.PLAYING || backgroundLyricHeld}
                 className="fixed inset-0 pointer-events-none z-[1000]"
             />
 
@@ -2934,13 +2941,20 @@ export default function App() {
             <AddToPlaylistHost
                 isDaylight={isDaylight}
                 localPlaylists={localPlaylists}
-                onlinePlaylists={onlinePlaylists}
-                onAddCurrentSongToLocalPlaylist={addCurrentSongToLocalPlaylist}
-                onCreateCurrentLocalPlaylist={createCurrentLocalPlaylist}
-                onAddCurrentSongToOnlinePlaylist={addCurrentSongToOnlinePlaylist}
-                onCreateCurrentOnlinePlaylist={createCurrentOnlinePlaylist}
-                onAddCurrentSongToNavidromePlaylist={addCurrentSongToNavidromePlaylist}
-                onCreateCurrentNavidromePlaylist={createCurrentNavidromePlaylist}
+                onAddSongsToLocalPlaylist={addPickedSongsToLocalPlaylist}
+                onCreateLocalPlaylistWithSongs={createLocalPlaylistWithSongs}
+                onAddSongsToOnlinePlaylist={addPickedSongsToOnlinePlaylist}
+                onCreateOnlinePlaylistWithSongs={createOnlinePlaylistWithSongs}
+                onAddSongsToNavidromePlaylist={addPickedSongsToNavidromePlaylist}
+                onCreateNavidromePlaylistWithSongs={createNavidromePlaylistWithSongs}
+            />
+
+            {/* 速记簿：左缘的把手与滑出的抽屉，非模态，三个视图里都在；播放页隐藏 UI 时把手跟着藏起来。 */}
+            <ScratchpadHost
+                isDaylight={isDaylight}
+                playback={scratchpadPlayback}
+                queue={scratchpadQueue}
+                isHandleHidden={currentView === 'player' && isPlayerChromeHidden}
             />
 
             <CommandPalette
@@ -2980,12 +2994,6 @@ export default function App() {
                 isOpen={startupExperience.isReleaseNotesOpen}
                 isDaylight={isDaylight}
                 onClose={startupExperience.closeReleaseNotes}
-            />
-            {/* 站点上发了比本机新的版本：提示一次，跳过后第二天才再提。 */}
-            <SiteUpdateDialog
-                isOpen={siteUpdateVersion !== null}
-                isDaylight={isDaylight}
-                onClose={dismissSiteUpdate}
             />
             <UserGuideModal theme={theme} />
             <PlaybackEntryViewPrompt theme={theme} />

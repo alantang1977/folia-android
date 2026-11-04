@@ -26,7 +26,6 @@ export const LOGIN_CASE_TEXTS: Record<LoginCaseId, { title: string; note?: strin
     'browser-unread': { title: 'login.caseBrowserUnread' },
     'browser-not-opened': { title: 'login.caseBrowserNotOpened' },
     'account-not-read': { title: 'login.caseAccountNotRead' },
-    'mobile-no-login': { title: 'login.caseMobileNoLogin', note: 'login.noteMobileNoLogin' },
     unknown: { title: 'login.caseUnknown', note: 'login.noteUnknown' },
 };
 

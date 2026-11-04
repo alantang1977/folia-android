@@ -1,6 +1,5 @@
 import { OnlineProviderError } from '../../../types/onlineMusic';
 import type { ProviderErrorCode } from '../../../types/onlineMusic';
-import { spotifyAndroidAvailable, runSpotifyAndroidOperation } from './spotifyAndroid';
 
 // src/services/onlineMusic/spotify/spotifyTransport.ts
 // The IPC boundary to electron/spotify/spotifyApiBridge.cjs. The Spotify token stays in the main
@@ -28,13 +27,10 @@ export interface SpotifyWireAudio { url: string; format: string }
 export interface SpotifyWireMadePlaylist { uri: string }
 export interface SpotifyWireLyrics { timed: boolean; lines: Array<{ startMs: number; words: string }> }
 
-// 手机端没有 Electron 主进程，但 WebView 里能直接做同一套事（见 spotifyAndroid.ts）。
 export const getSpotifyTransportAvailability = () => (
     typeof window !== 'undefined' && typeof window.electron?.spotifyRequest === 'function'
         ? { configured: true } as const
-        : spotifyAndroidAvailable()
-            ? { configured: true } as const
-            : { configured: false, reason: 'not-configured' } as const
+        : { configured: false, reason: 'runtime-unavailable' } as const
 );
 
 export async function requestSpotify<T = unknown>(operation: SpotifyOperation, params: SpotifyParams = {}): Promise<T> {
@@ -42,18 +38,6 @@ export async function requestSpotify<T = unknown>(operation: SpotifyOperation, p
         throw new OnlineProviderError('unavailable', 'Spotify requires the desktop app', 'spotify');
     }
     const named = operation === 'query' ? `${operation} ${String(params.name)}` : operation;
-    // Android：没有主进程可问，就在 WebView 里就地做（OAuth PKCE + pathfinder）。
-    if (typeof window.electron?.spotifyRequest !== 'function') {
-        const startedAt = Date.now();
-        try {
-            return await runSpotifyAndroidOperation(operation, params) as T;
-        } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            console.warn(`[Spotify] ${named} failed after ${Date.now() - startedAt}ms: ${message}`);
-            if (error instanceof OnlineProviderError) throw error;
-            throw new OnlineProviderError('unavailable', `Spotify request failed: ${message}`, 'spotify');
-        }
-    }
     const startedAt = Date.now();
     let result: SpotifyBridgeResult;
     try { result = await window.electron!.spotifyRequest(operation, params); }

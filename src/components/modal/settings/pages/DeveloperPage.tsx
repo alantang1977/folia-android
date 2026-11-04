@@ -1,18 +1,15 @@
 import React, { useSyncExternalStore } from 'react';
-import { FolderOpen, RotateCcw } from 'lucide-react';
+import { FolderOpen } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import ConsoleLogPanel from '../../../shared/ConsoleLogPanel';
 import {
-    chooseLocalLogDir,
     getDebugModuleSnapshot,
     openDebugLogsFolder,
-    resetLocalLogDir,
     setDebugModuleState,
     subscribeToDebugModule,
     type DebugLogMode,
 } from '../../../../services/debug/debugModule';
 import { isConsoleCaptureEnabled, setConsoleCaptureEnabled, subscribeToConsoleLog } from '../../../../utils/consoleLogBuffer';
-import { setIsMemoryMonitorVisible } from '../../../../stores/useAppChromeStore';
 import { Button, Group, Keys, Reveal, Row, Segmented, Toggle, option, useSettingsKitTheme, type SettingsGroupDef, type SettingsOptionDef } from '../kit';
 
 // src/components/modal/settings/pages/DeveloperPage.tsx
@@ -54,72 +51,47 @@ const DeveloperPage: React.FC = () => {
     return (
         <Group def={TOOLS} bare foot={t('options.consoleLogConvention')}>
             <Row option={O.sessionLog} hint={t('options.consoleLogCaptureDesc')}>
-                {/* 手机没有键盘：快捷键只作桌面提示，不在手机上显示。 */}
-                {debug.available && <Keys keys={['Alt', 'Shift', 'D']} />}
+                <Keys keys={['Alt', 'Shift', 'D']} />
                 <Toggle checked={capturing} onChange={setConsoleCaptureEnabled} />
             </Row>
             {/* With the session log off nothing is kept, so there is nothing to write or to read. */}
             <Reveal when={capturing}>
-                <Row sub option={O.logToFile} hint={filePath(debug.runtimeFile ?? debug.logsRoot)}>
-                    {/* 桌面：打开文件所在目录；手机：换一个日志目录（SAF 自带授权）。 */}
-                    {debug.available
-                        ? <Button icon={FolderOpen} tip={t('options.debugLogsOpenFolder')} onClick={() => void openDebugLogsFolder('runtime')} />
-                        : <Button icon={FolderOpen} tip={t('options.debugLogDirPick')} onClick={() => void chooseLocalLogDir()} />}
-                    {!debug.available && debug.logDirCustom && (
-                        <Button icon={RotateCcw} tip={t('options.debugLogDirReset')} onClick={() => void resetLocalLogDir()} />
-                    )}
-                    {/* 手机只有追加：写满就另存为第二份（folia-runtime.1.log），所以不给模式选择。 */}
-                    {debug.available && (
-                        <Segmented
-                            value={debug.runtimeLogMode}
-                            options={modeChoices}
-                            onChange={mode => void setDebugModuleState({ runtimeLogMode: mode })}
-                            disabled={!debug.filesAvailable || !debug.runtimeLogEnabled}
-                        />
-                    )}
+                <Row sub desktopOnly option={O.logToFile} hint={filePath(debug.runtimeFile ?? debug.logsRoot)}>
+                    <Button icon={FolderOpen} tip={t('options.debugLogsOpenFolder')} onClick={() => void openDebugLogsFolder('runtime')} />
+                    <Segmented
+                        value={debug.runtimeLogMode}
+                        options={modeChoices}
+                        onChange={mode => void setDebugModuleState({ runtimeLogMode: mode })}
+                        disabled={!debug.available || !debug.runtimeLogEnabled}
+                    />
                     <Toggle checked={debug.runtimeLogEnabled} onChange={enabled => void setDebugModuleState({ runtimeLogEnabled: enabled })} />
                 </Row>
                 <Row below={<ConsoleLogPanel isDaylight={isDaylight} className="rounded-lg bg-[var(--st-pv)]" listMaxHeightClass="max-h-[22rem]" />} />
             </Reveal>
 
-            {/* 手机上这段由渲染进程自己采样（见 memorySamples 的本地采样器），所以不再是桌面专属。 */}
-            <Row option={O.memoryMonitor} hint={t('options.memoryMonitorDesc')}>
-                {/* 手机没有键盘，Alt+Shift+M 按不出来，这里给一个能点的入口。 */}
-                {debug.memoryAvailable && !debug.available
-                    ? <Button onClick={() => setIsMemoryMonitorVisible(true)}>{t('options.memoryMonitorOpen')}</Button>
-                    : <Keys keys={['Alt', 'Shift', 'M']} />}
-                <Toggle
-                    checked={debug.memoryMonitorEnabled}
-                    disabled={!debug.memoryAvailable}
-                    onChange={enabled => void setDebugModuleState({ memoryMonitorEnabled: enabled })}
-                />
+            <Row desktopOnly option={O.memoryMonitor} hint={t('options.memoryMonitorDesc')}>
+                <Keys keys={['Alt', 'Shift', 'M']} />
+                <Toggle checked={debug.memoryMonitorEnabled} onChange={enabled => void setDebugModuleState({ memoryMonitorEnabled: enabled })} />
             </Row>
             {/* No samples are taken with the monitor off, so no file is written and no interval runs. */}
             <Reveal when={debug.memoryMonitorEnabled}>
                 {/* Named by `label`, not an option: the search already lists 写入本地文件 once, for the row above. */}
-                <Row sub label={t('options.debugLogsToFile')} hint={filePath(debug.memoryFile ?? debug.logsRoot)}>
-                    {debug.available
-                        ? <Button icon={FolderOpen} tip={t('options.debugLogsOpenFolder')} onClick={() => void openDebugLogsFolder('memory')} />
-                        : <Button icon={FolderOpen} tip={t('options.debugLogDirPick')} onClick={() => void chooseLocalLogDir()} />}
-                    {!debug.available && debug.logDirCustom && (
-                        <Button icon={RotateCcw} tip={t('options.debugLogDirReset')} onClick={() => void resetLocalLogDir()} />
-                    )}
-                    {debug.available && (
-                        <Segmented
-                            value={debug.memoryLogMode}
-                            options={modeChoices}
-                            onChange={mode => void setDebugModuleState({ memoryLogMode: mode })}
-                            disabled={!debug.filesAvailable || !debug.memoryLogEnabled}
-                        />
-                    )}
+                <Row sub desktopOnly label={t('options.debugLogsToFile')} hint={filePath(debug.memoryFile ?? debug.logsRoot)}>
+                    <Button icon={FolderOpen} tip={t('options.debugLogsOpenFolder')} onClick={() => void openDebugLogsFolder('memory')} />
+                    <Segmented
+                        value={debug.memoryLogMode}
+                        options={modeChoices}
+                        onChange={mode => void setDebugModuleState({ memoryLogMode: mode })}
+                        disabled={!debug.available || !debug.memoryLogEnabled}
+                    />
                     <Toggle checked={debug.memoryLogEnabled} onChange={enabled => void setDebugModuleState({ memoryLogEnabled: enabled })} />
                 </Row>
-                <Row sub option={O.memoryInterval}>
+                <Row sub desktopOnly option={O.memoryInterval}>
                     <Segmented
                         value={String(debug.memoryIntervalMs)}
                         options={MEMORY_INTERVAL_CHOICES}
                         onChange={interval => void setDebugModuleState({ memoryIntervalMs: Number(interval) })}
-                        disabled={!debug.memoryAvailable}
+                        disabled={!debug.available}
                     />
                 </Row>
             </Reveal>

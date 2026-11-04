@@ -29,8 +29,10 @@ import type { TrackProfile } from './trackProfile';
 export interface TransitionTrack {
     /** Seconds. Non-finite (live/unknown streams) leaves nothing to schedule against. */
     duration: number;
-    /** Timed lyric lines when available; null for instrumentals or missing lyric files. On the media's
-     *  own clock, like everything else here: a preview clip's lines go through `linesOnClipClock` first. */
+    /**
+     * Timed lyric lines when available; null for instrumentals or missing lyric files. On the media's
+     * own clock, like everything else here: a preview clip's lines go through `linesOnClipClock` first.
+     */
     lines: Line[] | null;
     /** Offline measurement of the file, when it has been analysed. */
     profile?: TrackProfile | null;

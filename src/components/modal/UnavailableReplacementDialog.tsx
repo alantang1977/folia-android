@@ -12,8 +12,6 @@ interface UnavailableReplacementDialogProps {
     originalSong: SongResult | null;
     replacementSong: SongResult | null;
     typeDesc?: string;
-    /** 'taken-down' 是下架；'unplayable' 是这一首在这个账号上放不了（会员、地区）。 */
-    why?: 'taken-down' | 'unplayable';
     isDaylight?: boolean;
     onClose: () => void;
     onConfirm: () => Promise<void> | void;
@@ -24,7 +22,6 @@ const UnavailableReplacementDialog: React.FC<UnavailableReplacementDialogProps> 
     originalSong,
     replacementSong,
     typeDesc,
-    why = 'taken-down',
     isDaylight = false,
     onClose,
     onConfirm,
@@ -89,15 +86,10 @@ const UnavailableReplacementDialog: React.FC<UnavailableReplacementDialogProps> 
             }}
             isDaylight={isDaylight}
             title={t('status.songUnavailableAlternativeTitle')}
-            description={why === 'unplayable'
-                ? t('status.songUnplayableAlternativeDescription', {
-                    song: songName,
-                    typeDesc: typeDesc || t('status.songUnavailableAlternativeDefaultType'),
-                })
-                : t('status.songUnavailableAlternativeDescription', {
-                    song: songName,
-                    typeDesc: typeDesc || t('status.songUnavailableAlternativeDefaultType'),
-                })}
+            description={t('status.songUnavailableAlternativeDescription', {
+                song: songName,
+                typeDesc: typeDesc || t('status.songUnavailableAlternativeDefaultType'),
+            })}
             footer={(
                 <>
                     <SheetButton onClick={onClose} disabled={isSubmitting}>

@@ -18,7 +18,6 @@ import { spotifyMutations } from './spotifyMutations';
 import { resetSpotifyRecommendations, spotifyRecommendations } from './spotifyRecommendations';
 import { describeSpotifyLoginFailure, spotifyLoginFailure } from './spotifyLoginFailure';
 import { describeSpotifyFailure } from './spotifyFailure';
-import { findPlayableReplacement } from './spotifyReplacement';
 
 // src/services/onlineMusic/spotify/spotifyProvider.ts
 // Spotify adapter. Sign-in happens in the browser where the person is already signed in to
@@ -48,12 +47,18 @@ interface SearchWalk { songs: UnifiedSong[]; seen: Set<string>; asked: number; d
 // The searches gone back to are few: the one on screen, and the ones the listener returns to.
 const MAX_SEARCH_WALKS = 8;
 const searchWalks = new Map<string, SearchWalk>();
-// Makes room for `kept`. A search read past its first page is one the listener is in; a lookup
-// (a song's lyrics) asks one page and never comes back. So the oldest of those goes first.
-const dropSearchWalk = (kept: SearchWalk): void => {
-    const held = [...searchWalks];
+// The searches of callers beside the host's own screen (a mod, through Folium's `folium.omni`),
+// which name themselves with a `session`: kept apart from the host's by session and text, under a
+// bound of their own, so that such a search never starts the listener's search over and never
+// drops it to make room.
+const MAX_SESSION_SEARCH_WALKS = 16;
+const sessionSearchWalks = new Map<string, SearchWalk>();
+// Makes room for `kept` in `walks`. A search read past its first page is one the listener is in; a
+// lookup (a song's lyrics) asks one page and never comes back. So the oldest of those goes first.
+const dropSearchWalk = (walks: Map<string, SearchWalk>, kept: SearchWalk): void => {
+    const held = [...walks];
     const [text] = held.find(([, walk]) => !walk.paged && walk !== kept) ?? held[0];
-    searchWalks.delete(text);
+    walks.delete(text);
 };
 // The sign-in attempt in progress; the desktop side decides how long it stays open.
 let activeLogin: SpotifyWireLoginStart | null = null;
@@ -63,7 +68,7 @@ let activeLogin: SpotifyWireLoginStart | null = null;
 i18n.on('languageChanged', clearSpotifyCatalogCache);
 
 export const spotifyProvider: OnlineMusicProvider = {
-    id: 'spotify', displayName: 'Spotify', shortName: 'Spotify',
+    id: 'spotify', displayName: 'Spotify', shortName: 'Spotify', shortNameKey: 'onlineProviderName.spotify',
     mark: { letter: 'S', color: '#22c55e' },
     getAvailability: getSpotifyTransportAvailability,
     describeFailure: describeSpotifyFailure,
@@ -86,15 +91,20 @@ export const spotifyProvider: OnlineMusicProvider = {
         // its start and kept: a page here is what the next rows add that no earlier row gave. A
         // search the listener comes back to goes on where it was; one no longer kept is walked again
         // from its start as far as the page asked for. A search asked from offset 0 begins anew.
-        async searchSongs(query, limit, offset) {
+        // A caller with a `session` has walks of its own (`sessionSearchWalks`).
+        async searchSongs(query, limit, offset, context) {
             const text = query.trim();
             if (!text) return { items: [], total: 0, nextOffset: offset, hasMore: false };
-            let walk = offset === 0 ? undefined : searchWalks.get(text);
+            const session = context?.session;
+            const walks = session === undefined ? searchWalks : sessionSearchWalks;
+            const maxWalks = session === undefined ? MAX_SEARCH_WALKS : MAX_SESSION_SEARCH_WALKS;
+            const key = session === undefined ? text : `${session}\n${text}`;
+            let walk = offset === 0 ? undefined : walks.get(key);
             if (!walk) {
                 walk = { songs: [], seen: new Set(), asked: 0, done: false, queue: Promise.resolve(), paged: false };
-                searchWalks.delete(text);
-                searchWalks.set(text, walk);
-                while (searchWalks.size > MAX_SEARCH_WALKS) dropSearchWalk(walk);
+                walks.delete(key);
+                walks.set(key, walk);
+                while (walks.size > maxWalks) dropSearchWalk(walks, walk);
             }
             if (offset > 0) walk.paged = true;
             const current = walk;
@@ -140,13 +150,6 @@ export const spotifyProvider: OnlineMusicProvider = {
         // Spotify sends them, encrypted and without their key, under the media cache's size limit.
         keepAudio: url => requestSpotify<boolean>('audio_keep', { url, limitBytes: cacheLimitBytes() }),
         hasKeptAudio: url => requestSpotify<boolean>('audio_kept', { url }),
-        // 免费账号拿不到音频（见 docs/spotify-capture/README.md），所以这首歌放不了时，去别的平台找
-        // 同一首歌来放：Spotify 还当目录，声音是别人的。会员账号有真音频，不换。
-        async getReplacement(song) {
-            const account = await requestSpotify<ProviderUser | null>('login_status').catch(() => null);
-            if (Number(account?.vipType) > 0) return null;
-            return findPlayableReplacement(song);
-        },
     },
     lyrics: {
         // Spotify's own lyrics are timed by line, or not at all. Untimed ones, and a failure to read

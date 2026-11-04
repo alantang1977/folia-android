@@ -1,11 +1,11 @@
 import type { UnifiedSong } from '../../../types';
-import type { OnlineMusicProvider, ProviderUser } from '../../../types/onlineMusic';
+import type { OnlineMusicProvider, ProviderCollection, ProviderPage, ProviderUser } from '../../../types/onlineMusic';
 import { createProviderSongMetadata } from '../../../utils/songMetadata';
 import { isMacPlatform } from '../../../utils/platform';
 import { parseLyricsByFormat } from '../../../utils/lyrics/parserCore';
 import { noteYtmAccount, ytmHasPremium } from './ytmAccount';
 import { getYtmTransportAvailability, requestYtm } from './ytmTransport';
-import type { YtmWirePage, YtmWireSong, YtmWireWebLoginState } from './ytmTransport';
+import type { YtmWireCollection, YtmWirePage, YtmWireSong, YtmWireWebLoginState } from './ytmTransport';
 import { createYtmPager, normalizeYtmCollection, normalizeYtmSong, normalizeYtmUser, requireYtmSong } from './ytmNormalize';
 import { clearYtmCatalogCache, ytmCatalog } from './ytmCatalog';
 import { clearYtmLibraryCache, ytmLibrary } from './ytmLibrary';
@@ -27,6 +27,24 @@ import i18n from '../../../i18n/config';
 const WEB_LOGIN_TTL_MS = 12 * 60 * 1000;
 
 const searchPager = createYtmPager<UnifiedSong>();
+// The searches of callers beside the host's own screen (a mod, through Folium's `folium.omni`),
+// which name themselves with a `session`: walked in a pager of their own, by session and text, so
+// that such a search never starts the listener's search over, and the walks it keeps (the pager
+// holds as many as `searchPager`) only ever make room among themselves.
+const sessionSearchPager = createYtmPager<UnifiedSong>();
+// Album and playlist searches, walked by kind and text as songs are.
+const collectionSearchPager = createYtmPager<ProviderCollection>();
+const searchYtmCollections = (kind: 'album' | 'playlist', query: string, limit: number, offset: number): Promise<ProviderPage<ProviderCollection>> => {
+    const text = query.trim();
+    if (!text) return Promise.resolve({ items: [], total: 0, nextOffset: offset, hasMore: false });
+    return collectionSearchPager.page(`${kind}:${text}`, offset, limit, async continuation => {
+        const page = await requestYtm<YtmWirePage<YtmWireCollection>>(
+            kind === 'album' ? 'search_albums' : 'search_playlists',
+            continuation ? { continuation } : { query: text },
+        );
+        return { items: page.items.map(item => normalizeYtmCollection(item, kind)), continuation: page.continuation };
+    });
+};
 // A letter of any script but Latin.
 const NON_LATIN_LETTER = /[^\p{Script=Latin}\p{Script=Common}\p{Script=Inherited}]/u;
 // The key of the sign-in in progress.
@@ -38,6 +56,8 @@ let loginStarts = 0;
 
 const forgetPages = (): void => {
     searchPager.clear();
+    sessionSearchPager.clear();
+    collectionSearchPager.clear();
     clearYtmCatalogCache();
     clearYtmLibraryCache();
     forgetYtmMusicPage();
@@ -47,7 +67,7 @@ const forgetPages = (): void => {
 i18n.on('languageChanged', forgetPages);
 
 export const ytmProvider: OnlineMusicProvider = {
-    id: 'ytm', displayName: 'YouTube Music', shortName: 'YT Music',
+    id: 'ytm', displayName: 'YouTube Music', shortName: 'YT Music', shortNameKey: 'onlineProviderName.ytm',
     mark: { letter: 'Y', color: '#e11d48' },
     getAvailability: getYtmTransportAvailability,
     describeFailure: describeYtmFailure,
@@ -55,14 +75,7 @@ export const ytmProvider: OnlineMusicProvider = {
     // radios, and the playlists of the account's music page. It has no daily songs, which YouTube
     // Music has no counterpart of. Its recommendation page is the explore tab.
     capabilities: {
-        search: true, playback: true, lyrics: true, wordByWordLyrics: false,
-        // 桌面版由主进程开浏览器窗口抓 Cookie；手机端由原生插件开应用内的 WebView 登录
-        // （audioNative/ytmLogin.ts），两者都能拿到会话。
-        auth: typeof window !== 'undefined' && (
-            typeof window.electron?.ytmRequest === 'function'
-            || Boolean((window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } })
-                .Capacitor?.isNativePlatform?.())
-        ),
+        search: true, playback: true, lyrics: true, wordByWordLyrics: false, auth: true,
         userLibrary: true, playlists: true, albums: true, artists: true, userAlbums: true,
         recommendations: true, explore: true, mutations: true, playlistTrackMutations: true, likes: true,
         // Albums and other people's playlists (`mutations.canSubscribe`).
@@ -71,14 +84,19 @@ export const ytmProvider: OnlineMusicProvider = {
     normalizeSong: normalizeYtmSong, normalizeUser: normalizeYtmUser, normalizeCollection: normalizeYtmCollection,
     songMetadata: { getSongMetadata: createProviderSongMetadata },
     search: {
-        async searchSongs(query, limit, offset) {
+        async searchSongs(query, limit, offset, context) {
             const text = query.trim();
             if (!text) return { items: [], total: 0, nextOffset: offset, hasMore: false };
-            return searchPager.page(`search:${text}`, offset, limit, async continuation => {
+            const session = context?.session;
+            const pager = session === undefined ? searchPager : sessionSearchPager;
+            const key = session === undefined ? `search:${text}` : `search:${session}\n${text}`;
+            return pager.page(key, offset, limit, async continuation => {
                 const page = await requestYtm<YtmWirePage<YtmWireSong>>('search_songs', continuation ? { continuation } : { query: text });
                 return { items: page.items.map(normalizeYtmSong), continuation: page.continuation };
             });
         },
+        searchAlbums: (query, limit, offset) => searchYtmCollections('album', query, limit, offset),
+        searchPlaylists: (query, limit, offset) => searchYtmCollections('playlist', query, limit, offset),
     },
     playback: {
         async getSongDetail(id) {

@@ -4,7 +4,7 @@ import { OnlineProviderError } from '../../../types/onlineMusic';
 import { normalizeQqCollection } from './qqNormalize';
 import { qqListKindOf } from './qqLists';
 import { requestQqSongDetail } from './qqSongDetail';
-import { hasQqSession, requestQq } from './qqTransport';
+import { hasUsableQqSession, requestQq } from './qqTransport';
 
 // src/services/onlineMusic/qq/qqMutations.ts
 // QQ 音乐的写入：往自建歌单加歌删歌、收藏歌单，以及查询收藏状态（qq-music-api 3.3.0）；红心与收藏专辑（3.3.1）。
@@ -111,12 +111,7 @@ const subscribePlaylist: NonNullable<OnlineMutationProvider['subscribePlaylist']
 /**
  * 红心与取消红心。后端要数字 id 与 songmid 一起核对，type 0 是调用方确认的普通曲库歌曲；
  * 回包的 liked 对上才算成功。结果不明时后端回 502，写入可能已经生效，这里不重送。
- *
- * 3.3.1 之前的后端没有 `/user/song/like`（404 → `unsupported`）：那时红心就是「我喜欢」歌单
- * （自建目录 201）的加歌删歌，退回 3.3.0 就有的 `/user/playlist/tracks`，按同一套回读确认。
  */
-const QQ_LIKED_TID = '201';
-
 const likeSong: NonNullable<OnlineMutationProvider['likeSong']> = async (song, liked) => {
     // 只认真的 songmid：没有 mid 的条目 mediaId 会退成数字 id，送去只会被后端核对失败。
     const sourceRef = typeof song === 'object' && song.sourceRef?.kind === 'online' && song.sourceRef.providerId === 'qq'
@@ -125,29 +120,9 @@ const likeSong: NonNullable<OnlineMutationProvider['likeSong']> = async (song, l
     const mid = typeof song === 'object' ? String(song.qqMid || sourceRef?.providerData?.songMid || '').trim() : '';
     if (!mid) throw new OnlineProviderError('invalid-response', 'QQ song has no songmid for a like write', 'qq');
     const id = await resolveQqSongId(song);
-    try {
-        const response = await requestQq<any>('user_song_like', {}, { song: { id, mid, type: 0 }, liked });
-        if (response?.liked !== liked) {
-            throw new OnlineProviderError('invalid-response', 'QQMusicApi user_song_like returned no confirmation', 'qq', response);
-        }
-        return;
-    } catch (error) {
-        if (!(error instanceof OnlineProviderError) || error.code !== 'unsupported') throw error;
-        // 旧后端：把我喜欢当作一张 201 目录的自建歌单来改。带上 songmid，后端按它核对这一行。
-        const operation = liked ? 'add' : 'del';
-        const response = await requestQq<any>('user_playlist_tracks', {}, {
-            tid: QQ_LIKED_TID,
-            op: operation,
-            songs: [{ id, mid, type: 0 }],
-        });
-        if (response?.changed !== true && !alreadyApplied(operation, response)) {
-            throw new OnlineProviderError(
-                'invalid-response',
-                `QQMusicApi user_playlist_tracks reported no change (${operation} on the liked list)`,
-                'qq',
-                response,
-            );
-        }
+    const response = await requestQq<any>('user_song_like', {}, { song: { id, mid, type: 0 }, liked });
+    if (response?.liked !== liked) {
+        throw new OnlineProviderError('invalid-response', 'QQMusicApi user_song_like returned no confirmation', 'qq', response);
     }
 };
 
@@ -166,7 +141,7 @@ const subscribeAlbum: NonNullable<OnlineMutationProvider['subscribeAlbum']> = as
  * 收藏按钮的状态留空（界面按未收藏显示，点了只会去收藏，不会误取消）。
  */
 export const getQqSubscriptionStatus = async (type: 'playlist' | 'album', id: MediaId): Promise<boolean> => {
-    if (!hasQqSession()) return false;
+    if (!hasUsableQqSession()) return false;
     const key = type === 'playlist' ? positiveInteger(id) : String(id ?? '').trim();
     if (key === null || key === '') return false;
     const response = await requestQq<any>('user_subscription_status', { type, ids: String(key) });

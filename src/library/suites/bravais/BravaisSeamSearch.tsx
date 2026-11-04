@@ -2,8 +2,6 @@ import React, { useEffect, useRef, type FormEvent, type KeyboardEvent } from 're
 import { Search, X } from 'lucide-react';
 import type { BravaisLayer } from './bravaisLayer';
 import { setBravaisSearchOpen } from './bravaisHomeUiStore';
-import { useTranslation } from 'react-i18next';
-import { useSearchHistoryStore } from '../../../stores/useSearchHistoryStore';
 import BravaisSeamCrumbs from './BravaisSeamCrumbs';
 
 // src/library/suites/bravais/BravaisSeamSearch.tsx
@@ -15,8 +13,6 @@ import BravaisSeamCrumbs from './BravaisSeamCrumbs';
 
 const BravaisSeamSearch: React.FC<{ layer: BravaisLayer }> = ({ layer }) => {
     const inputRef = useRef<HTMLInputElement>(null);
-    const { t } = useTranslation();
-    const searchHistory = useSearchHistoryStore(state => state.entries);
     const search = layer.seam.home?.search;
     useEffect(() => {
         inputRef.current?.focus({ preventScroll: true });
@@ -60,26 +56,6 @@ const BravaisSeamSearch: React.FC<{ layer: BravaisLayer }> = ({ layer }) => {
                     <X aria-hidden />
                 </button>
             </form>
-            {searchHistory.length > 0 && (
-                <div className="flex flex-wrap gap-1.5 px-1" data-bravais-search-history>
-                    <span className="text-[11px] uppercase tracking-wide opacity-40">{t('search.historyTitle')}</span>
-                    {searchHistory.slice(0, 8).map(entry => (
-                        <button
-                            key={entry}
-                            type="button"
-                            className="max-w-[45vw] truncate rounded-full border border-current/20 px-2.5 py-1 text-xs opacity-70 transition-opacity hover:opacity-100"
-                            title={entry}
-                            onClick={() => {
-                                search.onSubmit(entry);
-                                close();
-                            }}
-                        >
-                            {entry}
-                        </button>
-                    ))}
-                </div>
-            )}
-
             <p className="bravais-search-hint">{search.hint}</p>
             <span className="bravais-form-buttons">
                 <button type="button" className="bravais-chrome-button is-primary" data-bravais-seam-action="submit-search"

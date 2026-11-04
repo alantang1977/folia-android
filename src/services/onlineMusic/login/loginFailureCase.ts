@@ -34,8 +34,6 @@ const CASES: Record<LoginCaseId, { kind: LoginCaseKind; action: LoginCaseAction 
     'browser-unread': { kind: 'E', action: 'retry', details: true },
     'browser-not-opened': { kind: 'E', action: 'reopen-browser', details: true },
     'account-not-read': { kind: 'F', action: 'retry', details: true },
-    // 手机版没有账号通道（WebView 里开不了 Google 的授权页）：不是网络问题，重试也没用。
-    'mobile-no-login': { kind: 'E', action: 'retry', details: true },
     unknown: { kind: 'G', action: 'retry', details: true },
 };
 

@@ -7,13 +7,12 @@ import { Group, Row, Status, Toggle, option, useSettingsKitTheme, type SettingsG
 import { SettingsAnchor } from '../navigation/SettingsAnchorContext';
 
 // src/components/modal/settings/pages/ModsPage.tsx
-// The 模组 page: the mod system's master switch, and under it the mod manager. The manager is the
-// one component the command palette's mods surface also shows (src/mods/manager); here it wears the
-// settings window's colours. On the Android app the main-process half is stood in for by
-// src/mods/android/androidModsBridge.ts, which is why the page is no longer desktop-only.
+// The 模组 page (desktop app only): the mod system's master switch, and under it the mod manager.
+// The manager is the one component the command palette's mods surface also shows
+// (src/mods/manager); here it wears the settings window's colours.
 
-const SYSTEM: SettingsGroupDef = { id: 'modSystem', titleKey: 'options.enableModSystem' };
-const MANAGER: SettingsGroupDef = { id: 'modList', titleKey: 'mods.title' };
+const SYSTEM: SettingsGroupDef = { id: 'modSystem', titleKey: 'options.enableModSystem', electronOnly: true };
+const MANAGER: SettingsGroupDef = { id: 'modList', titleKey: 'mods.title', electronOnly: true };
 
 const O = {
     enabled: option(SYSTEM, 'enableModSystem', 'options.enableModSystem'),

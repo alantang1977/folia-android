@@ -8,7 +8,7 @@ import type { ProviderErrorCode } from '../../../types/onlineMusic';
 export type YtmOperation =
     | 'login_status' | 'logout'
     | 'web_login_start' | 'web_login_check' | 'web_login_cancel' | 'web_login_open'
-    | 'search_songs' | 'song_detail' | 'song_detail_en' | 'song_detail_zh' | 'lyrics' | 'album' | 'artist' | 'playlist' | 'public_playlist' | 'user_playlists' | 'user_albums' | 'audio'
+    | 'search_songs' | 'search_albums' | 'search_playlists' | 'song_detail' | 'song_detail_en' | 'song_detail_zh' | 'lyrics' | 'album' | 'artist' | 'playlist' | 'public_playlist' | 'user_playlists' | 'user_albums' | 'audio'
     | 'explore' | 'mix' | 'playlist_edit' | 'list_save' | 'list_saved' | 'song_like' | 'song_versions' | 'played_as';
 export type YtmParams = Record<string, string | undefined>;
 // `reason`: the desktop side's own word for why a sign-in failed, where it has one.
@@ -70,47 +70,15 @@ export type YtmWireWebLoginState =
     | { state: 'confirmed'; account: unknown }
     | { state: 'error'; message: string; code?: ProviderErrorCode; reason?: string };
 
-// 手机端没有 Electron 主进程，但 WebView 里能跑 youtubei.js（见 audioNative/ytm.ts）：
-// 只要原生桥在，这一项就算配置好了。
-const hasNativeBridge = (): boolean => (
-    typeof window !== 'undefined'
-    && Boolean((window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.())
-);
-
 export const getYtmTransportAvailability = () => (
     typeof window !== 'undefined' && typeof window.electron?.ytmRequest === 'function'
         ? { configured: true } as const
-        : hasNativeBridge()
-            ? { configured: true } as const
-            : { configured: false, reason: 'not-configured' } as const
+        : { configured: false, reason: 'runtime-unavailable' } as const
 );
 
 export async function requestYtm<T = unknown>(operation: YtmOperation, params: YtmParams = {}): Promise<T> {
     if (!getYtmTransportAvailability().configured) {
         throw new OnlineProviderError('unavailable', 'YouTube Music requires the desktop app', 'ytm');
-    }
-    // Android：请求在 WebView 里就地做（youtubei.js），没有主进程可问。
-    if (typeof window.electron?.ytmRequest !== 'function') {
-        const startedAt = Date.now();
-        try {
-            const { handleYtmOperation } = await import('../../../audioNative');
-            return await handleYtmOperation(operation, params) as T;
-        } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            const marked = (error as { ytmCode?: unknown } | null)?.ytmCode;
-            console.warn(`[Ytm] ${operation} failed after ${Date.now() - startedAt}ms: ${message}`);
-            // 手机版没有的能力（浏览器登录、歌单写入…）：说"暂不支持"，绝不能当成连不上。
-            if (marked === 'unsupported') {
-                throw new OnlineProviderError('unsupported', message, 'ytm', 'mobile-no-login');
-            }
-            // 只有真的没接到才算连不上：裸 fetch 的 TypeError、明显是网络/超时的句子。
-            const networkish = error instanceof TypeError
-                || /failed to fetch|fetch failed|networkerror|net::|timeout|timed out|econn|enotfound|eai_again/i.test(message);
-            if (networkish) {
-                throw new OnlineProviderError('network', `YouTube Music request failed: ${message}`, 'ytm');
-            }
-            throw new OnlineProviderError('unavailable', `YouTube Music request failed: ${message}`, 'ytm');
-        }
     }
     const startedAt = Date.now();
     let result: YtmBridgeResult;

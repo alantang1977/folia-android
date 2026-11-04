@@ -11,8 +11,7 @@ import { getOriginalCoverUrl } from '../../../utils/coverUrl';
 // src/services/onlineMusic/qq/qqNormalize.ts
 
 // Album art rule already proven by the existing QQ lyric search in qqLyricProvider.ts.
-// Lattice 墙封面降 30% 像素（300→210）：列表墙的解码/显存开销约省一半，滑动不再卡顿
-const ALBUM_COVER_BASE = 'https://y.gtimg.cn/music/photo_new/T002R210x210M000';
+const ALBUM_COVER_BASE = 'https://y.gtimg.cn/music/photo_new/T002R300x300M000';
 // 歌手头像与专辑封面是同一套 photo_new 规则，只差 T001 / T002 前缀。
 const SINGER_AVATAR_BASE = 'https://y.gtimg.cn/music/photo_new/T001R300x300M000';
 

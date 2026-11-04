@@ -21,9 +21,5 @@ export const describeYtmFailure = (_operation: OnlineFailureOperation, error: un
     // YouTube wants a sign-in for the track. The bridge reports this word where nobody is signed
     // in, or where the account's own player said it too (loadPlan).
     if (word === 'LOGIN_REQUIRED') return { case: 'sign-in-needed', code: word };
-    if (word) return { code: word };
-    // 手机端（audioNative/ytm.ts）抛的错本身就带着原因：没有音频格式时写 playability、
-    // 请求失败时写 HTTP 状态。原样交给界面当引文，比只说一句"播放失败"有用。
-    if (error.message) return { case: 'no-audio', message: error.message.slice(0, 240) };
-    return null;
+    return word ? { code: word } : null;
 };

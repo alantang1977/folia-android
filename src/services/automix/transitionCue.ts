@@ -120,8 +120,9 @@ export const MIN_DRAWN_SECONDS = 5;
  * Whether a cue is one to draw. Asked by both animations, so they can never disagree about it.
  *
  * Two of the four parts belong to the caller: `switchedOn` is its setting, `renderer` is which of
- * the two drawings it is. The other two are properties of the transition itself - see
- * `whyCueNotDrawn`.
+ * the two drawings it is. The other two are properties of the transition itself - a plain fade is
+ * not a mix and nothing on screen should say it is, and a blend too short to watch is a flash
+ * rather than a picture.
  *
  * `renderer` is what holds the two switches apart. A settings preview goes out on the same channel
  * as every real handover, so without a name on it the drawing that was already switched on replays

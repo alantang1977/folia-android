@@ -10,10 +10,8 @@ const hasElectronSelfCheck = (): boolean => (
     typeof window !== 'undefined' && typeof window.electron?.runLoginSelfCheck === 'function'
 );
 
-/** 此刻能不能自检：桌面版总能；网页版要配置了远端 API。'extension' 是 Android 扩展协议（无远端 API），跳过。 */
-export const canRunLoginSelfCheck = (remoteBase: string | null): boolean => (
-    hasElectronSelfCheck() || (Boolean(remoteBase) && remoteBase !== 'extension')
-);
+/** 此刻能不能自检：桌面版总能；网页版要配置了远端 API。 */
+export const canRunLoginSelfCheck = (remoteBase: string | null): boolean => hasElectronSelfCheck() || Boolean(remoteBase);
 
 const isLoopbackHost = (hostname: string): boolean => (
     hostname === 'localhost' || hostname.endsWith('.localhost') || /^127\./.test(hostname) || hostname === '[::1]' || hostname === '::1'
@@ -87,7 +85,6 @@ export const runLoginSelfCheck = async (
     remoteBase: string | null,
 ): Promise<LoginSelfCheckResult | null> => {
     if (hasElectronSelfCheck()) return window.electron!.runLoginSelfCheck!(providerId);
-    // Android 扩展协议：请求由原生层直连上游，没有可探测的远端 API 地址
-    if (!remoteBase || remoteBase === 'extension') return null;
+    if (!remoteBase) return null;
     return probeRemoteApi(providerId, remoteBase);
 };

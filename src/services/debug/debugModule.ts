@@ -5,7 +5,6 @@ import {
     subscribeToConsoleLog,
     type ConsoleLogEntry,
 } from '../../utils/consoleLogBuffer';
-import { nativeCapacitor, setMemoryLogSink, startLocalMemorySampling, stopLocalMemorySampling } from './memorySamples';
 
 // src/services/debug/debugModule.ts
 // The renderer's half of the developer debug module: the switches, and the pipe that sends console
@@ -20,12 +19,6 @@ export type DebugLogMode = 'append' | 'overwrite';
 export interface DebugModuleSnapshot {
     /** False in the browser build, and until the first answer from the main process arrives. */
     available: boolean;
-    /** 内存监控在手机上由渲染进程自己采样，所以它不需要 Electron 主进程。 */
-    memoryAvailable: boolean;
-    /** 手机上的“写入本地文件”由原生插件落盘，所以这两个开关在手机上也能用。 */
-    filesAvailable: boolean;
-    /** 手机上是否已经选了自定义日志目录（决定要不要显示“恢复默认”）。 */
-    logDirCustom: boolean;
     runtimeLogEnabled: boolean;
     runtimeLogMode: DebugLogMode;
     /** The session-log switch as the main process last heard it. See `syncCapture`. */
@@ -41,9 +34,6 @@ export interface DebugModuleSnapshot {
 
 const UNAVAILABLE: DebugModuleSnapshot = {
     available: false,
-    memoryAvailable: false,
-    filesAvailable: false,
-    logDirCustom: false,
     runtimeLogEnabled: false,
     runtimeLogMode: 'append',
     consoleCaptureEnabled: true,
@@ -76,132 +66,11 @@ export const subscribeToDebugModule = (listener: () => void) => {
 
 const adopt = (state: DebugModuleState | undefined | null) => {
     if (!state) { publish(UNAVAILABLE); return; }
-    publish({ available: true, memoryAvailable: true, filesAvailable: true, ...state });
-};
-
-/*
- * 手机上没有主进程：所有开关存在 localStorage，采样由渲染进程做，日志由原生插件落盘。
- * `available` 仍为 false —— 它表示“有 Electron 主进程”，而不是“功能可用”。
- */
-const LOCAL_DEBUG_KEY = 'folia.debug.local';
-// 手机上只有「追加」一种写入方式，所以这里不存写入模式。
-interface LocalDebugState {
-    runtimeLogEnabled: boolean;
-    memoryMonitorEnabled: boolean;
-    memoryIntervalMs: number;
-    memoryLogEnabled: boolean;
-}
-const readLocalDebug = (): LocalDebugState => {
-    try {
-        const raw = typeof localStorage === 'undefined' ? '' : localStorage.getItem(LOCAL_DEBUG_KEY);
-        const parsed = raw ? JSON.parse(raw) as Partial<Record<keyof LocalDebugState, unknown>> : {};
-        return {
-            runtimeLogEnabled: parsed.runtimeLogEnabled === true,
-            memoryMonitorEnabled: parsed.memoryMonitorEnabled === true,
-            memoryIntervalMs: Number(parsed.memoryIntervalMs) > 0 ? Number(parsed.memoryIntervalMs) : 2000,
-            memoryLogEnabled: parsed.memoryLogEnabled === true,
-        };
-    } catch {
-        return {
-            runtimeLogEnabled: false, memoryMonitorEnabled: false,
-            memoryIntervalMs: 2000, memoryLogEnabled: false,
-        };
-    }
-};
-
-const writeLocalDebug = (patch: Partial<LocalDebugState>) => {
-    const next = { ...readLocalDebug(), ...patch };
-    try { localStorage.setItem(LOCAL_DEBUG_KEY, JSON.stringify(next)); } catch { /* 隐私模式忽略 */ }
-    return next;
-};
-
-/** 手机上的两个日志文件位置，由原生插件给出（外部存储的 files/logs）。 */
-let localPaths: { dir: string; runtime: string; memory: string; custom?: boolean } = { dir: '', runtime: '', memory: '' };
-let localPathsLoaded = false;
-const loadLocalPaths = async () => {
-    if (localPathsLoaded) return;
-    try {
-        const paths = await nativeCapacitor()?.debugLogPaths?.();
-        if (paths) { localPaths = paths; localPathsLoaded = true; }
-    } catch { /* 路径拿不到就只显示 null，不影响写入 */ }
-    publishLocalState();
-};
-
-const formatRuntimeLine = (line: RuntimeLine) => {
-    const stamp = new Date(line.at).toISOString();
-    const tag = line.tag ? ` [${line.tag}]` : '';
-    return `${stamp} [${line.level}]${tag} ${line.text}\n`;
-};
-
-/** 手机：打开系统目录选择器。SAF 自带授权，不碰「所有文件访问」权限。 */
-export const chooseLocalLogDir = async (): Promise<{ ok: boolean; message?: string }> => {
-    const native = nativeCapacitor();
-    if (!native?.debugPickLogDir) return { ok: false, message: '当前平台不支持选择目录' };
-    try {
-        const picked = await native.debugPickLogDir();
-        if (picked?.cancelled) return { ok: false };
-        if (picked?.error) return { ok: false, message: picked.error };
-        localPathsLoaded = false;
-        await loadLocalPaths();
-        return { ok: true };
-    } catch (error) {
-        return { ok: false, message: error instanceof Error ? error.message : String(error) };
-    }
-};
-
-/** 手机：恢复为应用自己的 files/logs 目录。 */
-export const resetLocalLogDir = async () => {
-    const native = nativeCapacitor();
-    if (!native?.debugResetLogDir) return;
-    try {
-        await native.debugResetLogDir();
-        localPathsLoaded = false;
-        await loadLocalPaths();
-    } catch { /* 恢复失败时保持原样 */ }
-};
-
-const publishLocalState = () => {
-    const local = readLocalDebug();
-    publish({
-        ...UNAVAILABLE,
-        memoryAvailable: true,
-        filesAvailable: true,
-        logDirCustom: localPaths.custom === true,
-        runtimeLogEnabled: local.runtimeLogEnabled,
-        runtimeLogMode: 'append',
-        memoryMonitorEnabled: local.memoryMonitorEnabled,
-        memoryIntervalMs: local.memoryIntervalMs,
-        memoryLogEnabled: local.memoryLogEnabled,
-        memoryLogMode: 'append',
-        logsRoot: localPaths.dir || null,
-        runtimeFile: localPaths.runtime || null,
-        memoryFile: localPaths.memory || null,
-    });
-    if (local.memoryMonitorEnabled) startLocalMemorySampling(local.memoryIntervalMs);
-    else stopLocalMemorySampling();
-};
-
-/** 手机上的“写入本地文件”：整条 sample 追加（或首条覆盖）到 folia-memory.log。 */
-const installLocalMemoryLogSink = () => {
-    setMemoryLogSink(sample => {
-        const local = readLocalDebug();
-        const native = nativeCapacitor();
-        if (!local.memoryLogEnabled || !native?.debugAppendLog) return;
-        void native.debugAppendLog({
-            kind: 'memory',
-            text: `${JSON.stringify(sample)}\n`,
-        }).catch(error => console.warn('[debug] 内存日志写入失败', error));
-    });
+    publish({ available: true, ...state });
 };
 
 /** Re-reads the switches from the main process, which owns them. */
 export const refreshDebugModule = async () => {
-    if (!bridge()) {
-        installLocalMemoryLogSink();
-        publishLocalState();
-        void loadLocalPaths();
-        return;
-    }
     try {
         adopt(await bridge()?.debugGetState?.());
     } catch {
@@ -218,18 +87,6 @@ export const refreshDebugModule = async () => {
  */
 export const setDebugModuleState = async (patch: Partial<Pick<DebugModuleSnapshot,
     'runtimeLogEnabled' | 'runtimeLogMode' | 'consoleCaptureEnabled' | 'memoryMonitorEnabled' | 'memoryLogEnabled' | 'memoryLogMode' | 'memoryIntervalMs'>>) => {
-    if (!bridge()) {
-        // 手机：开关写 localStorage 后立即生效（重开采样 / 下一批日志开始写）。
-        // 写入方式只有追加，所以那两个 mode 字段在手机上被忽略。
-        writeLocalDebug({
-            ...(patch.runtimeLogEnabled !== undefined ? { runtimeLogEnabled: patch.runtimeLogEnabled } : {}),
-            ...(patch.memoryMonitorEnabled !== undefined ? { memoryMonitorEnabled: patch.memoryMonitorEnabled } : {}),
-            ...(patch.memoryIntervalMs ? { memoryIntervalMs: patch.memoryIntervalMs } : {}),
-            ...(patch.memoryLogEnabled !== undefined ? { memoryLogEnabled: patch.memoryLogEnabled } : {}),
-        });
-        publishLocalState();
-        return;
-    }
     try {
         adopt(await bridge()?.debugSetState?.(patch));
     } catch {
@@ -282,20 +139,7 @@ const flush = () => {
     if (!queue.length) return;
     const lines = queue;
     queue = [];
-    const electron = bridge();
-    if (electron) {
-        try { electron.debugWriteRuntimeLines?.(lines); } catch { /* the window is going away */ }
-        return;
-    }
-    // 手机：没有主进程可写，交给原生插件追加到 folia-runtime.log。
-    const native = nativeCapacitor();
-    if (!native?.debugAppendLog) return;
-    const local = readLocalDebug();
-    if (!local.runtimeLogEnabled) return;
-    void native.debugAppendLog({
-        kind: 'runtime',
-        text: lines.map(formatRuntimeLine).join(''),
-    }).catch(error => console.warn('[debug] 运行日志写入失败', error));
+    try { bridge()?.debugWriteRuntimeLines?.(lines); } catch { /* the window is going away */ }
 };
 
 /** Called once the first main-process answer is in: keep the startup lines if logging is on, else drop. */

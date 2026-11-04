@@ -22,30 +22,6 @@ installMemorySampleFeed();
 // if (import.meta.env.DEV) installCoverSizeAudit();
 installGlobalVisualizerFrameRateLimiter();
 
-// Android 媒体通知（封面/歌名/歌手/可拖进度条/三按钮）+ 前台服务保活：
-// 桥就绪后把播放状态推给原生 FoliaPlaybackService（远端按钮事件也由它派发回前端）。
-if (window.Capacitor?.isNativePlatform?.()) {
-  void import('./svc/nativePlaybackBridge').then(({ installNativePlaybackBridge }) => {
-    const plugin = (window as any).Capacitor?.Plugins?.FoliaNative;
-    if (plugin) void installNativePlaybackBridge(plugin);
-  }).catch(() => { /* 非原生环境忽略 */ });
-}
-
-// Android 锁屏 / 通知栏歌词：把整条时间轴交给原生（ColorOS 认 metadata["lyricInfo"]），
-// 只在换歌或换词时推一次，进度由系统按 PlaybackState 的时钟推进。
-if (window.Capacitor?.isNativePlatform?.()) {
-  void import('./svc/nativeLyricBridge').then(({ installNativeLyricBridge }) => {
-    installNativeLyricBridge();
-  }).catch(() => { /* 非原生环境忽略 */ });
-}
-
-// Android 媒体通知（封面/歌名/歌手/可拖进度条/三按钮）+ 前台服务保活：
-// 桥就绪后把播放状态推给原生 FoliaPlaybackService（远端按钮事件也由它派发回前端）。
-if (window.Capacitor?.isNativePlatform?.()) {
-  void import('./svc/nativePlaybackBridge').then(({ installNativePlaybackBridge }) => {
-    const plugin = (window as any).Capacitor?.Plugins?.FoliaNative;
-    if (plugin) void installNativePlaybackBridge(plugin);
-  }).catch(() => { /* 非原生环境忽略 */ });
-}
-
 void import('./bootstrap');
+// window.__foliaDev and the ?skipStartup / ?mockSong launch flags (src/dev/devLaunchFlags.ts).
+if (import.meta.env.DEV) void import('./dev/devTools');

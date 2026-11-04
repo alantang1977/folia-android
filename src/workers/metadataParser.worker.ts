@@ -1,8 +1,8 @@
 import { parseBlob } from 'music-metadata';
 import { repairFlacMetadata } from '../utils/flacMetadataRepair';
-import { withMetadataParserTypeHint } from '../utils/metadataParserTypeHint';
 import { hasLegacyId3Tags, repairLatin1DecodedGbkText } from '../utils/legacyTagTextRepair';
 import { formatLrcTimestamp } from '../utils/lyrics/lrcTimestamp';
+import { withMetadataParserTypeHint } from '../utils/metadataParserTypeHint';
 
 interface ParsedLyricLine {
     text?: string;

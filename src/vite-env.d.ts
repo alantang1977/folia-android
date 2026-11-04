@@ -532,18 +532,41 @@ declare global {
 
   type StageSession = StageMediaSession;
 
+  /** One song a Stage search found; `songRef` (`<provider>:<songId>`) plays or queues it. */
   interface StageSearchResult {
-    songId: number;
+    songId: number | string;
     title: string;
     artists: string[];
     album: string;
     durationMs: number | null;
     coverUrl: string | null;
+    provider: string;
+    songRef: string;
   }
 
-  interface StageExternalPlayRequest {
+  /** A song the Stage API names: the omni provider and its id there. */
+  interface StageSongRef {
+    providerId: string;
+    songId: number | string;
+  }
+
+  /** A search the Stage API asks the renderer to run at one omni provider. */
+  interface StagePlayerSearchRequest {
     requestId: string;
-    songId: number;
+    providerId: string;
+    query: string;
+    limit: number;
+  }
+
+  interface StagePlayerSearchResult {
+    requestId: string;
+    ok: boolean;
+    error?: string | null;
+    songs?: StageSearchResult[];
+  }
+
+  interface StageExternalPlayRequest extends StageSongRef {
+    requestId: string;
     appendToQueue?: boolean;
   }
 
@@ -658,8 +681,8 @@ declare global {
   interface StagePlayerQueueRequest {
     requestId: string;
     action: 'append' | 'insert-next' | 'remove' | 'move' | 'select' | 'clear';
-    songId?: number;
-    songIds?: number[];
+    /** The songs an append or insert-next adds, in order. */
+    songs?: StageSongRef[];
     queueItemId?: string;
     fromQueueItemId?: string;
     fromIndex?: number;
@@ -940,6 +963,10 @@ declare global {
       restartNeteaseApi: (reason?: 'needed') => Promise<ElectronNeteaseApiStatus>;
       onNeteaseApiStatusChanged: (callback: (status: ElectronNeteaseApiStatus) => void) => () => void;
       getKugouApiStatus: () => Promise<ElectronKugouApiStatus>;
+      fnmusicRequest: (
+        operation: 'login' | 'logout' | 'request' | 'stream' | 'coverUrl' | 'getStatus',
+        params?: import('./services/onlineMusic/fnmusic/fnmusicTransport').FnMusicBridgeParams,
+      ) => Promise<import('./services/onlineMusic/fnmusic/fnmusicTransport').FnMusicBridgeResult>;
       qishuiRequest: (
         operation: import('./services/onlineMusic/qishui/qishuiTransport').QishuiOperation,
         params?: import('./services/onlineMusic/qishui/qishuiTransport').QishuiParams,
@@ -952,6 +979,11 @@ declare global {
         operation: import('./services/onlineMusic/ytm/ytmTransport').YtmOperation,
         params?: import('./services/onlineMusic/ytm/ytmTransport').YtmParams,
       ) => Promise<import('./services/onlineMusic/ytm/ytmTransport').YtmBridgeResult>;
+      appleMusicWindowsExperimental?: boolean;
+      appleMusicRequest: (
+        operation: import('./services/onlineMusic/appleMusic/appleMusicTransport').AppleMusicOperation,
+        params?: import('./services/onlineMusic/appleMusic/appleMusicTransport').AppleMusicParams,
+      ) => Promise<import('./services/onlineMusic/appleMusic/appleMusicTransport').AppleMusicBridgeResult>;
       spotifyRequest: (
         operation: import('./services/onlineMusic/spotify/spotifyTransport').SpotifyOperation,
         params?: import('./services/onlineMusic/spotify/spotifyTransport').SpotifyParams,
@@ -987,7 +1019,7 @@ declare global {
       setNativeTheme: (themeSource: 'system' | 'light' | 'dark') => Promise<void>;
       getMainWindowClickThroughEnabled: () => Promise<boolean>;
       setMainWindowClickThroughEnabled: (enabled: boolean) => Promise<boolean>;
-      setMainWindowClickThroughUnlockHover: (active: boolean) => Promise<boolean>;
+      setMainWindowClickThroughUnlockHover: (active: boolean, viewportWidth?: number, coordinates?: { screenX: number; clientX: number }) => Promise<boolean>;
       getMainWindowAlwaysOnTop: () => Promise<boolean>;
       setMainWindowAlwaysOnTop: (enabled: boolean) => Promise<boolean>;
       onMainWindowClickThroughChanged: (callback: (state: ElectronMainWindowClickThroughState) => void) => () => void;
@@ -1056,11 +1088,13 @@ declare global {
       publishStagePlayerSnapshot: (snapshot: StagePlayerSnapshot, options?: { forcePlaybackEvent?: boolean }) => Promise<StagePlayerSnapshot>;
       completeStagePlayerControlRequest: (result: StagePlayerRequestResult) => Promise<boolean>;
       completeStagePlayerQueueRequest: (result: StagePlayerRequestResult) => Promise<boolean>;
+      completeStagePlayerSearchRequest: (result: StagePlayerSearchResult) => Promise<boolean>;
       onStageSessionUpdated: (callback: (status: StageStatus) => void) => () => void;
       onStageSessionCleared: (callback: (status: StageStatus) => void) => () => void;
       onStageExternalPlayRequest: (callback: (request: StageExternalPlayRequest) => void) => () => void;
       onStagePlayerControlRequest: (callback: (request: StagePlayerControlRequest) => void) => () => void;
       onStagePlayerQueueRequest: (callback: (request: StagePlayerQueueRequest) => void) => () => void;
+      onStagePlayerSearchRequest: (callback: (request: StagePlayerSearchRequest) => void) => () => void;
       mods?: {
         listMods: () => Promise<{ mods: ModRuntimeInfo[]; ffmpeg: ModFfmpegStatus; directories: string[]; startSkipped?: boolean }>;
         setModEnabled: (modId: string, enabled: boolean) => Promise<{ ok: boolean; error?: string; mods: ModRuntimeInfo[] }>;

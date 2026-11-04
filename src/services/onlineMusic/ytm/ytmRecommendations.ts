@@ -3,11 +3,9 @@ import { OnlineProviderError } from '../../../types/onlineMusic';
 import type { OnlineRecommendationProvider, ProviderCollection } from '../../../types/onlineMusic';
 import { forgetYtmMusicPage, ytmMusicPagePlaylists } from './ytmExplore';
 import { normalizeYtmSong } from './ytmNormalize';
-import { addYtmSeeds, noteYtmListened, ytmLikedSeeds, ytmListenedSeeds, ytmRadioSongs, ytmSeedOf } from './ytmRadio';
+import { addYtmSeeds, noteYtmListened, ytmLikedSeeds, ytmListenedSeeds, ytmRadioSongs } from './ytmRadio';
 import type { YtmSeed } from './ytmRadio';
 import { errorMessage } from '../../../utils/errorText';
-import { requestYtm } from './ytmTransport';
-import type { YtmWireExplorePage } from './ytmTransport';
 
 // src/services/onlineMusic/ytm/ytmRecommendations.ts
 // The radio tab for YouTube Music:
@@ -40,8 +38,6 @@ const newFm = () => ({
     known: new Set<string>(),
     /** Whether the account's liked songs were put among them. */
     hasLiked: false,
-    /** Whether the songs of the music page were taken for want of anything else. */
-    hasPageSeeds: false,
     /** The radio being handed out: the song it was asked with, and what is left of it. */
     radio: null as { seed: YtmSeed; songs: UnifiedSong[] } | null,
     /** Every song handed out or trashed, with the song its radio was asked with ('' for a song no radio here gave). */
@@ -64,9 +60,8 @@ const isOffline = (error: unknown) => error instanceof OnlineProviderError && er
 
 // The songs to ask with. The ones played here join as the explore page hands them over. The liked
 // ones are read once, and again when every song was asked with and the last radio is used up.
-// Where they cannot be read the FM goes on with the songs played here, and with none of those it
-// takes the songs of the music page, once; with none of those either there is no FM; only offline
-// is the call failed, so that the tab is asked for again.
+// Where they cannot be read the FM goes on with the songs played here, and with none of those
+// there is no FM; only offline is the call failed, so that the tab is asked for again.
 const gatherSeeds = async (session: Fm): Promise<void> => {
     addYtmSeeds(session, ytmListenedSeeds());
     const hasSongsLeft = session.seeds.length > 0 || Boolean(session.radio?.songs.length);
@@ -79,23 +74,6 @@ const gatherSeeds = async (session: Fm): Promise<void> => {
     } catch (error) {
         if (isOffline(error) && !hasSongsLeft) throw error;
         console.warn(`[Ytm] Personal FM: the liked-music list could not be read (${wordsOf(error)}); it goes on with the ${session.seeds.length} songs played here`);
-    }
-    // Nothing to ask with yet (a new account, or one whose liked list is empty, and no song
-    // played in the app): the songs of the music page are taken, so that the FM has records to
-    // go on with instead of staying empty.
-    if (session.seeds.length === 0 && !session.hasPageSeeds) {
-        session.hasPageSeeds = true;
-        try {
-            const page = await requestYtm<YtmWireExplorePage>('explore', {});
-            const seeds = page.sections.flatMap(section => section.items)
-                .flatMap(item => (item.kind === 'song' ? [item.song] : []))
-                .map(ytmSeedOf);
-            addYtmSeeds(session, seeds);
-            console.log(`[Ytm] Personal FM: nothing to ask with yet; ${seeds.length} songs of the music page were taken`);
-        } catch (error) {
-            if (isOffline(error)) throw error;
-            console.warn(`[Ytm] Personal FM: the music page could not be read (${wordsOf(error)}); there is nothing to ask with`);
-        }
     }
 };
 

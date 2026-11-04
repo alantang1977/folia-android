@@ -11,14 +11,8 @@ export type BodianBridgeResult = BodianResult;
 export const BODIAN_NEEDS_DESKTOP = 'Bodian requires the desktop app';
 export const BODIAN_BRIDGE_FAILED = 'Bodian desktop request failed';
 
-const isAndroidNativeRuntime = (): boolean => (
-    typeof window !== 'undefined'
-    && (window as unknown as { Capacitor?: { getPlatform?: () => string } }).Capacitor?.getPlatform?.() === 'android'
-);
-
 export const getBodianTransportAvailability = () => (
-    typeof window !== 'undefined'
-    && (typeof window.electron?.bodianRequest === 'function' || isAndroidNativeRuntime())
+    typeof window !== 'undefined' && typeof window.electron?.bodianRequest === 'function'
         ? { configured: true } as const
         : { configured: false, reason: 'runtime-unavailable' } as const
 );
@@ -31,14 +25,8 @@ export async function requestBodian<T = unknown>(operation: BodianOperation, par
     // Omni consumers request 150/1000-row batches; Bodian serves at most 100 and returns its own cursor.
     const boundedParams = Number.isSafeInteger(params.limit) && Number(params.limit) > 100
         ? { ...params, limit: 100 } : params;
-    if (typeof window.electron?.bodianRequest === 'function') {
-        try { result = await window.electron!.bodianRequest(operation, boundedParams); }
-        catch (error) { throw new OnlineProviderError('network', BODIAN_BRIDGE_FAILED, 'bodian', error); }
-    } else {
-        // Android 扩展协议：WebView 内经原生桥直接调波点上游
-        const { extensionBodianRequest } = await import('../../../audioNative');
-        result = await extensionBodianRequest(operation, boundedParams);
-    }
+    try { result = await window.electron!.bodianRequest(operation, boundedParams); }
+    catch (error) { throw new OnlineProviderError('network', BODIAN_BRIDGE_FAILED, 'bodian', error); }
     // The package's code and sentence go on as they are: bodianFailure.ts says what they mean.
     if (!result.ok) throw new OnlineProviderError(result.error.code, result.error.message, 'bodian');
     return result.data as T;

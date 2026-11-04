@@ -134,12 +134,7 @@ const itemOf = (card: Card): ProviderExploreItem | null => {
 const keyOf = (item: ProviderExploreItem): string => (item.kind === 'collection' ? `${item.collection.type}:${item.collection.id}` : `song:${item.song.id}`);
 const rowsOf = (section: Section | undefined): Card[] => section?.sectionItems?.items ?? [];
 const countOf = (sections: ProviderExploreSection[]) => sections.reduce((count, section) => count + section.items.length, 0);
-// `homeEndUserIntegration` 现在是必填的（2026-10-22 实测，缺了回 400 `missing variable
-// $homeEndUserIntegration`）；即使带着它，Spotify 也仍收旧的 home 哈希，所以两边都写上新的一份。
-const homeVariables = () => ({
-    timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone, sp_t: '',
-    homeEndUserIntegration: 'INTEGRATION_WEB_PLAYER',
-});
+const homeVariables = () => ({ timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone, sp_t: '' });
 // The page of the account's lists pages all its sections at once: entries `offset` onwards of each.
 const madeVariables = (offset: number, limit: number) => ({
     uri: MADE_FOR_ACCOUNT, pagePagination: { offset: 0, limit: 20 }, sectionPagination: { offset, limit },

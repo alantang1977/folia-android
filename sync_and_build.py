@@ -324,6 +324,16 @@ def commit_and_push(target_dir, version, upstream_commit, dry_run):
         log("[dry-run] 跳过 commit & push")
         return
 
+    # CI 环境：先配置 git 用户和 remote，再 commit
+    if os.environ.get("GITHUB_WORKSPACE"):
+        run(["git", "config", "user.name", "github-actions[bot]"], cwd=target_dir)
+        run(["git", "config", "user.email",
+             "github-actions[bot]@users.noreply.github.com"], cwd=target_dir)
+        token = os.environ.get("GITHUB_TOKEN", "")
+        run(["git", "remote", "set-url", "origin",
+             f"https://x-access-token:{token}@github.com/{TARGET_OWNER}/{TARGET_REPO}.git"],
+            cwd=target_dir)
+
     run(["git", "add", "-A"], cwd=target_dir)
     r = run(["git", "diff", "--cached", "--quiet"], cwd=target_dir, check=False)
     if r.returncode == 0:
@@ -335,18 +345,6 @@ def commit_and_push(target_dir, version, upstream_commit, dry_run):
            f"- 保留 Android 专属文件\n"
            f"- versionName={version}")
     run(["git", "commit", "-m", msg], cwd=target_dir)
-
-    # CI 环境：配置 git 用户并推送
-    if os.environ.get("GITHUB_WORKSPACE"):
-        run(["git", "config", "user.name", "github-actions[bot]"], cwd=target_dir)
-        run(["git", "config", "user.email",
-             "github-actions[bot]@users.noreply.github.com"], cwd=target_dir)
-        # 确保 origin URL 带 token
-        token = os.environ.get("GITHUB_TOKEN", "")
-        run(["git", "remote", "set-url", "origin",
-             f"https://x-access-token:{token}@github.com/{TARGET_OWNER}/{TARGET_REPO}.git"],
-            cwd=target_dir)
-
     run(["git", "push", "origin", TARGET_BRANCH], cwd=target_dir)
     log("推送完成")
 

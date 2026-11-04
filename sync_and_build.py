@@ -301,6 +301,8 @@ def build_apk(target_dir, dry_run):
         gradlew = android_dir / "gradlew.bat"
 
     if not dry_run:
+        # 确保 gradlew 有执行权限（git checkout 在 Linux 上可能丢失 +x 位）
+        gradlew.chmod(0o755)
         run([str(gradlew), "assembleDebug"], cwd=android_dir, env=env)
 
     apk = target_dir / "android" / "app" / "build" / "outputs" / "apk" / "debug" / "app-debug.apk"
@@ -486,4 +488,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-#（注：内容由AI生成）

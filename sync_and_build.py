@@ -65,6 +65,12 @@ SHARED_DIRS = [
     "native", "test", "electron",
 ]
 
+# 安卓关键目录：每次都从 Timingyyds 完整覆盖（不做增量）
+# 这些是安卓桥接核心代码，必须完整无误
+FORCE_RESTORE_DIRS = [
+    "src/audioNative",
+]
+
 # 顶层文件：仅当 Timingyyds 没有时才新增
 ADDITIVE_TOP_FILES = [
     "vercel.json", "wrangler.jsonc",
@@ -200,6 +206,46 @@ def sync_additive(ab_dir, up_dir, target_dir, dry_run):
     2. 再向上叠加上游独有的新文件（新功能）
     3. Timingyyds 已有的文件永不覆盖
     """
+    # ---- 第 0 步：强制恢复安卓关键目录（每次都完整覆盖）----
+    log("\n--- 步骤0: 强制恢复安卓关键目录 ---")
+    for dirname in FORCE_RESTORE_DIRS:
+        ab_d = ab_dir / dirname
+        dst_d = target_dir / dirname
+        if not ab_d.exists():
+            log(f"  跳过(底基无此目录): {dirname}/")
+            continue
+        if dst_d.exists():
+            log(f"  删除旧: {dirname}/")
+            if not dry_run:
+                shutil.rmtree(dst_d)
+        log(f"  强制恢复: {dirname}/")
+        if not dry_run:
+            shutil.copytree(ab_d, dst_d, symlinks=True)
+
+    # ---- 第 0.5 步：修补缺失的 reference/router stub ----
+    # Timingyyds 的 referenceBridge.ts 导入了 ./reference/router，
+    # 但 reference/ 目录在 .gitignore 中不提交，需要自动生成 stub
+    ref_dir = target_dir / "src" / "audioNative" / "reference"
+    ref_router = ref_dir / "router.ts"
+    if not ref_router.exists():
+        log("  生成 stub: src/audioNative/reference/router.ts")
+        if not dry_run:
+            ref_dir.mkdir(parents=True, exist_ok=True)
+            ref_router.write_text(
+                "// 自动生成的 stub —— reference/ 目录为开发参考用，不提交 git\n"
+                "// 构建时提供空实现，避免 vite build 报错\n\n"
+                "interface RequestOptions {\n"
+                "  path: string;\n"
+                "  method?: string;\n"
+                "  query?: Record<string, string>;\n"
+                "  body?: unknown;\n"
+                "}\n\n"
+                "export async function handleApiRequest(_options: RequestOptions): Promise<unknown> {\n"
+                "  return { code: -1, message: 'reference api not available in build' };\n"
+                "}\n",
+                encoding="utf-8",
+            )
+
     # ---- 第 1 步：确保 Timingyyds 代码在 target_dir 里 ----
     log("\n--- 步骤1: 确保 Timingyyds 安卓底基完整 ---")
     base_files_added = 0

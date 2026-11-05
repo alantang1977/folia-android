@@ -73,16 +73,41 @@ FORCE_RESTORE_DIRS = [
     "src/audioNative",
 ]
 
-# 安卓特定文件/目录：必须从 Timingyyds 保留（不被上游覆盖）
-# 这些文件集成了安卓桥接，用上游版本会丢失安卓功能
+# 安卓特定文件/目录：必须从 Timingyyds v2.3.0 保留（不被上游覆盖）
+# 这些是 Timingyyds 独有的安卓桥接代码，上游仓库中不存在
 ANDROID_PATHS = [
+    # 原生桥接核心
     "src/audioNative",
     "src/svc",
+    "src/nativeBridge",
+    "src/mods/android",
+    # 入口文件（修改了桥接初始化）
     "src/App.tsx",
     "src/bootstrap.tsx",
     "src/index.tsx",
+    # 服务层（安卓原生登录/播放）
     "src/services/onlineMusic",
     "src/services/automix/stems.ts",
+    "src/services/nativeLocalMusic.ts",
+    "src/services/aiAndroid",
+    # 安卓专属 UI 组件
+    "src/components/modal/settings/pages/AndroidAiSettings.tsx",
+    "src/components/modal/SiteUpdateDialog.tsx",
+    "src/components/modal/lyric-filter",
+    "src/components/visualizer/lumiere",
+    "src/components/visualizer/backgrounds/useSameOriginCoverUrl.ts",
+    # 安卓专属 hooks
+    "src/hooks/useNativeBackButton.ts",
+    "src/hooks/useNativeMediaActions.ts",
+    "src/hooks/useSiteUpdateCheck.ts",
+    # 安卓专属 stores
+    "src/stores/useAiSettingsStore.ts",
+    "src/stores/useAppUpdatePromptStore.ts",
+    "src/stores/useLatticePerformanceModeStore.ts",
+    "src/stores/useSearchHistoryStore.ts",
+    # 安卓专属工具
+    "src/utils/localLibraryDiagnostics.ts",
+    "src/utils/system/appVersionCheck.ts",
 ]
 
 # 顶层文件：仅当 Timingyyds 没有时才新增

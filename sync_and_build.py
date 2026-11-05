@@ -77,6 +77,7 @@ FORCE_RESTORE_DIRS = [
 # 这些文件集成了安卓桥接，用上游版本会丢失安卓功能
 ANDROID_PATHS = [
     "src/audioNative",
+    "src/svc",
     "src/App.tsx",
     "src/bootstrap.tsx",
     "src/index.tsx",

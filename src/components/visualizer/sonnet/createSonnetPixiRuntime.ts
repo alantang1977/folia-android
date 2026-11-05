@@ -36,18 +36,6 @@ import {
 // 段落场景缓存、换歌溶解和每帧调度。
 type PixiModule = typeof import('pixi.js');
 
-// Android（Capacitor）：平板高分屏上 PIXI 全分辨率渲染是 Lattice 掉帧主因 —— 分辨率钳到 1.0。
-// 放在模块层：创建与每次 resize 都要用，先前写在 create() 里、resizeToHost() 读不到而抛
-// ReferenceError，商籁因此没有画布。
-const isAndroidNativeApp = (): boolean => (
-    typeof window !== 'undefined' && Boolean((window as any).Capacitor?.isNativePlatform?.())
-);
-
-const sonnetPixiResolution = (width: number, height: number, textureResolution: number): number => {
-    const wanted = snapResolutionToTexturePool(width, height, textureResolution);
-    return isAndroidNativeApp() ? Math.min(wanted, 1) : wanted;
-};
-
 export interface SonnetSongMetadata {
     title?: string | null;
     artist?: string | null;
@@ -85,7 +73,7 @@ export interface SonnetRuntimeOptions {
     program: SonnetProgram;
     theme: Theme;
     tuning: SonnetTuning;
-    /** 智能动感模式 (SmartBeatSettings.enabled); its strengths reach the frame through the beat clock. */
+    /** 智能动感模式 (`smartBeatActive`: on or cached); its strengths reach the frame through the beat clock. */
     smartBeatEnabled: boolean;
     currentTime: MotionValue<number>;
     audioPower?: MotionValue<number>;
@@ -173,7 +161,7 @@ export class SonnetPixiRuntime {
             ...contextOptions,
             ...context,
             autoDensity: true,
-            resolution: sonnetPixiResolution(width, height, options.tuning.textureResolution),
+            resolution: snapResolutionToTexturePool(width, height, options.tuning.textureResolution),
             autoStart: false,
             sharedTicker: false,
             preference: 'webgl',
@@ -239,7 +227,7 @@ export class SonnetPixiRuntime {
         this.app.renderer.resize(
             width,
             height,
-            sonnetPixiResolution(width, height, this.options.tuning.textureResolution),
+            snapResolutionToTexturePool(width, height, this.options.tuning.textureResolution),
         );
         // Staged against the old viewport, so its layout no longer fits.
         if (this.songSwap?.staged) {

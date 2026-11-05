@@ -10,7 +10,6 @@ import {
 } from '../services/playbackAdapters';
 import { omni } from '../services/onlineMusic/omni';
 import { isLocalPlaybackSong, isNavidromePlaybackSong } from '../utils/appPlaybackGuards';
-import { useSearchHistoryStore } from './useSearchHistoryStore';
 
 const LAST_HOME_VIEW_TAB_KEY = 'last_home_view_tab';
 const DEFAULT_SEARCH_LIMIT = 30;
@@ -259,8 +258,6 @@ export const useSearchNavigationStore = create<SearchNavigationState>((set, get)
         if (!trimmedQuery) {
             return false;
         }
-        // 每次真正提交的词都进最近搜索记录；搜索面板空着时列出来的就是它。
-        useSearchHistoryStore.getState().record(trimmedQuery);
 
         const requestId = get().requestId + 1;
         set({

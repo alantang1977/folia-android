@@ -18,13 +18,6 @@ const retryBrokenLocalCoverImages = (): void => {
 };
 
 export const initializeLocalCoverRuntime = (): void => {
-  // Android APK 构建（FOLIA_DISABLE_PWA=1）没有 PWA worker —— 单独注册封面 SW，
-  // 否则 /__folia_cover/ 无人应答，本地歌曲封面全部破图。该 SW 只答 /__folia_cover/。
-  if (typeof window !== 'undefined'
-    && (window as any).Capacitor?.isNativePlatform
-    && 'serviceWorker' in navigator) {
-    navigator.serviceWorker.register('/folia-cover-sw.js', { scope: '/' }).catch(() => {});
-  }
   if (isLocalCoverWebRuntimeSupported() && 'serviceWorker' in navigator) {
     // /__folia_cover/ is answered by the PWA worker (vite.config.ts imports public/folia-cover-sw.js
     // into it), which vite-plugin-pwa registers. Startup does not wait for it: on a first visit it only

@@ -25,20 +25,11 @@ import {
 import { hasLocalCoverBinary } from './localCoverBinaryStore';
 import { hasLocalSongCover } from '../utils/localSongCover';
 import { createFoliaIgnoreMatcher, isIgnoredByFoliaMatchers, type FoliaIgnoreMatcher } from '../utils/foliaIgnore';
-import { noteLocalLibraryDiagnostic } from '../utils/localLibraryDiagnostics';
 import { getLocalLibraryAvailability } from './localLibraryAvailability';
 import { useLyricSettingsStore } from '../stores/useLyricSettingsStore';
 import { getLocalLyricFilePriority, isSameLocalLyricFormatOrder, normalizeLocalLyricFormatOrder, type LocalLyricFileFormat } from '../utils/lyrics/localLyricFormatOrder';
 import { readLyricFile } from '../utils/lyrics/lyricFileDecoding';
 import { isLocalFolderIgnored, normalizeLocalFolderPath, runLocalFolderMutation, setLocalFolderIgnored } from './localLibraryFolderIgnore';
-import {
-    copyAndroidLocalAudio,
-    deleteAndroidImportedAudio,
-    isAndroidNativeRuntime,
-    nativeAudioUrlForRef,
-    pickAndroidLocalMusic,
-    scanAndroidDeviceMusic,
-} from './nativeLocalMusic';
 
 
 type EmbeddedMetadata = EmbeddedMetadataResult;
@@ -188,11 +179,6 @@ async function getImportDirectoryHandle(expectedRootName?: string): Promise<File
 
     const availability = getLocalLibraryAvailability();
     if (!availability.supported) throw new Error(`Local library unavailable: ${availability.reason}`);
-
-    // 安卓走原生，曲库里没有也不可能有持久化的目录句柄。可用性判定在那边是「原生可用」，
-    // 但 WebView 仍然没有 showDirectoryPicker —— 不挡住的话这里会直接抛
-    // 「showDirectoryPicker is not a function」。
-    if (isAndroidNativeRuntime()) return null;
 
     // @ts-ignore - showDirectoryPicker is not in all TypeScript definitions
     return await window.showDirectoryPicker();
@@ -1136,15 +1122,6 @@ async function hydrateImportedSongsInBackground(rootFolderName: string, songs: L
 
 // Import folder using File System Access API (if supported)
 export async function importFolder(expectedRootName?: string): Promise<LocalSong[]> {
-    /*
-     * 安卓没有 File System Access API，这里不能去调 showDirectoryPicker —— 它会直接抛
-     * 「Local library unavailable」。改走原生：用系统文件管理器挑整个文件夹（或逐个文件），
-     * 选中的音频由原生复制进私有目录，再通过回环地址播放。
-     */
-    if (isAndroidNativeRuntime()) {
-        return await pickAndroidLocalMusic();
-    }
-
     // Request access in the user gesture before waiting for other library writes.
     try {
         const dirHandle = await getImportDirectoryHandle(expectedRootName);
@@ -1532,11 +1509,7 @@ export async function deleteLocalSong(id: string): Promise<void> {
 }
 
 function getRootFolderName(song: LocalSong): string | null {
-    // folderName 才是资料库里的「导入根」名（安卓导入是「Android 文件导入」），而 filePath 是平台
-    // 内部路径（安卓导入写成 Android/Imported/<id>）——两者在安卓上并不一致。以前先取 filePath，
-    // 于是根名算成 "Android"，而确认框传进来的是 "Android 文件导入"，过滤一首歌都匹配不到：
-    // 「删除文件夹」既不删记录也不报错，点了跟没点一样。桌面导入两边本来就同名前缀，行为不变。
-    const pathLike = song.folderName || song.filePath;
+    const pathLike = song.filePath || song.folderName;
     if (!pathLike) return null;
 
     const [rootFolderName] = pathLike.split('/');
@@ -1629,126 +1602,9 @@ async function cleanupDirHandleIfUnused(rootFolderName: string): Promise<void> {
     }
 }
 
-type NativeAudioProbe = 'ok' | 'missing' | 'blocked';
-
-/**
- * 播放前先问一次本机回环服务：这个 ref 到底还能不能取到字节。
- *
- * 之前是把 http://127.0.0.1:<port>/audio/<ref> 直接丢给 <audio> —— 副本丢了、空了、
- * 或者请求被网络栈（明文 / CORS / Range）挡掉，浏览器报出来**一模一样**：
- * networkState=3、mediaErrorCode=4，就一句 "MEDIA_ELEMENT_ERROR: Format error"。
- * 拿 1 个字节的 Range 请求先探一次，三种情况就能分开处理。
- */
-async function probeNativeAudioUrl(url: string): Promise<NativeAudioProbe> {
-    try {
-        const response = await fetch(url, { headers: { Range: 'bytes=0-0' } });
-        if (response.ok) return 'ok';
-        // 服务侧对「文件不存在」和「文件是空的」都回 404（并把原因写进 logcat）。
-        return response.status === 404 ? 'missing' : 'blocked';
-    } catch {
-        // fetch 直接抛：连字节都没拿到，属于网络层被挡，不是文件本身的问题。
-        return 'blocked';
-    }
-}
-
-/**
- * 把整首取成本地 Blob 再换 object URL。
- *
- * 这是非安卓本地播放一直在走的路（getAudioFromFile 也是 object URL）。换成它之后，
- * 回环地址在 <audio> 上可能遇到的 CORS / Range / 明文 / 混合内容这些环节全部不存在 ——
- * object URL 是同源资源。只在「流式那条路走不通」时才用，正常情况不花这个内存。
- */
-async function blobUrlFromNativeAudioUrl(url: string): Promise<string | null> {
-    try {
-        const response = await fetch(url);
-        if (!response.ok) return null;
-        return createSafeObjectUrl(await response.blob());
-    } catch {
-        return null;
-    }
-}
-
-/**
- * 按 ref 取一个能播的地址：拿得到就流式播，取不到字节就整首取成 Blob。
- * 返回 null 表示这个 ref 彻底不行（调用方据此决定要不要自己复制一份）。
- */
-/**
- * 上一次播放失败的原因。
- *
- * 没有 logcat 的机器上，「无法访问文件，请重新导入文件夹」这一句等于什么都没说：
- * 副本丢了、请求被网络栈挡了、端口没拿到 —— 三种的处理方式完全不同。
- * 记下来交给界面显示，用户一眼就能把范围报出来。
- */
-export type LocalAudioFailureReason = 'missing' | 'blocked' | 'no-ref' | 'no-server' | null;
-let lastLocalAudioFailure: LocalAudioFailureReason = null;
-export const getLastLocalAudioFailureReason = (): LocalAudioFailureReason => lastLocalAudioFailure;
-
-async function playableUrlForNativeRef(ref: string): Promise<string | null> {
-    const nativeUrl = await nativeAudioUrlForRef(ref);
-    if (!nativeUrl) {
-        lastLocalAudioFailure = 'no-server';
-        return null;
-    }
-    const probe = await probeNativeAudioUrl(nativeUrl);
-    if (probe === 'ok') {
-        lastLocalAudioFailure = null;
-        return nativeUrl;
-    }
-    if (probe === 'missing') {
-        lastLocalAudioFailure = 'missing';
-        return null;
-    }
-    const blobUrl = await blobUrlFromNativeAudioUrl(nativeUrl);
-    lastLocalAudioFailure = blobUrl ? null : 'blocked';
-    return blobUrl;
-}
-
 // Get audio blob from local song using fileHandle
 // Returns blob URL if fileHandle exists, null otherwise
 export async function getAudioFromLocalSong(song: LocalSong): Promise<string | null> {
-    // 安卓原生曲库：文件在 MediaStore 或 App 私有目录里，WebView 拿不到句柄，
-    // 走原生那个回环的小服务（地址按当前端口现拼，见 nativeAudioUrlForRef）。
-    if (song.nativeAudioRef) {
-        const direct = await playableUrlForNativeRef(song.nativeAudioRef);
-        if (direct) {
-            lastLocalAudioFailure = null;
-            return direct;
-        }
-
-        /*
-         * 自己复制一份。
-         *
-         * MediaStore 那一路（扫描设备音乐库）是按 id **现读用户原文件**的：
-         * 文件被搬走、媒体库还没刷新、某个 ROM 不给读，播放就只剩一句
-         * 「无法访问文件，请重新导入」—— 而用户的原文件根本没动过，
-         * 让人重新导入整个文件夹毫无道理。这里把源文件的字节拷进 App 私有目录，
-         * 之后这首歌只认那份副本，和「挑选导入」那条路一样，与 MediaStore 和权限脱钩。
-         *
-         * 只在真播不出来时拷这一首，不是扫描时整库复制 —— 那会平白占几个 G。
-         */
-        const copiedRef = await copyAndroidLocalAudio(song.nativeAudioRef, song.fileName, song.fileSize);
-        if (copiedRef && copiedRef !== song.nativeAudioRef) {
-            const copiedUrl = await playableUrlForNativeRef(copiedRef);
-            if (copiedUrl) {
-                // 记住新 ref：下次直接播副本，不用再拷贝一次。
-                song.nativeAudioRef = copiedRef;
-                void saveLocalSong(song).catch((error) => {
-                    console.warn('[LocalMusic] Failed to persist the copied audio ref:', error);
-                });
-                return copiedUrl;
-            }
-        }
-
-        // 原因必须写进日志：副本丢了 / 被网络栈挡了 / 服务没起来，三种的处理完全不同，
-        // 而真机上那句「无法访问文件」本身看不出任何区别。
-        console.warn(
-            `[LocalMusic] Native audio unreachable for ${song.id}: ${song.nativeAudioRef}`
-            + ` (reason: ${lastLocalAudioFailure ?? 'unknown'})`,
-        );
-        return null;
-    }
-    lastLocalAudioFailure = 'no-ref';
-
     const fileHandle = await getAccessibleFileHandle(song);
 
     if (fileHandle) {
@@ -1827,17 +1683,12 @@ export async function getLocalSongArrayBuffer(song: LocalSong): Promise<ArrayBuf
 // Extracts and persists one song's embedded cover after an explicit playback-time request.
 async function extractAndPersistSongCover(
     song: LocalSong,
-    fileHandle: FileSystemFileHandle | null,
-    file?: File,
+    fileHandle: FileSystemFileHandle,
 ): Promise<LocalSong> {
-    const source = file ?? await fileHandle?.getFile();
-    if (!source) return song;
-    // 上游的「无封面文件不重复解析」缓存：同一份文件按 size:lastModified 记住它没有内嵌封面，
-    // 下次不再整文件解析一遍。安卓这条路上 fileHandle 可能是 null（没有 File System Access），
-    // 所以 revision 取的是真正拿来解析的那份 source。
-    const fileRevision = `${source.size}:${source.lastModified}`;
+    const file = await fileHandle.getFile();
+    const fileRevision = `${file.size}:${file.lastModified}`;
     if (songsWithoutEmbeddedCover.get(song.id) === fileRevision) return song;
-    const metadata = await extractEmbeddedMetadata(source, true);
+    const metadata = await extractEmbeddedMetadata(file, true);
     if (!metadata.cover || !metadata.coverAssetId) {
         songsWithoutEmbeddedCover.set(song.id, fileRevision);
         return song;
@@ -1849,36 +1700,11 @@ async function extractAndPersistSongCover(
         ...song,
         localCoverAssetId: metadata.coverAssetId,
         localCoverSource: 'embedded',
-        // 安卓没有 File System Access 句柄，这里不能凭空塞一个：留原值（undefined）。
-        ...(fileHandle ? { fileHandle } : {}),
+        fileHandle,
     };
     Object.assign(song, updatedSong);
     await saveLocalSong(updatedSong);
     return updatedSong;
-}
-
-/**
- * 安卓上把整首音频取回来当 File。
- *
- * 本地歌在安卓走的是原生回环服务（`nativeAudioRef`），**没有 File System Access 句柄** ——
- * 而 ensureLocalSongCoverAsset 之前只认句柄，拿不到就直接放弃。
- * 结果是：安卓本地歌的封面**只有导入那一次**有机会抽出来（导入时解析内嵌元数据），
- * 那一趟一旦失败（比如副本那次 fetch 404），这首歌就永远没有封面 ——
- * 队列磁贴、播放页全是空白。这里让封面抽取也能从原生回环那份字节里拿。
- */
-async function nativeAudioFile(song: LocalSong): Promise<File | null> {
-    if (!song.nativeAudioRef) return null;
-    const url = await nativeAudioUrlForRef(song.nativeAudioRef);
-    if (!url) return null;
-    try {
-        const response = await fetch(url);
-        if (!response.ok) return null;
-        const blob = await response.blob();
-        if (blob.size <= 0) return null;
-        return new File([blob], song.fileName || 'audio', { type: song.mimeType || 'audio/*' });
-    } catch {
-        return null;
-    }
 }
 
 export async function ensureLocalSongCoverAsset(song: LocalSong): Promise<LocalSong> {
@@ -1889,15 +1715,7 @@ export async function ensureLocalSongCoverAsset(song: LocalSong): Promise<LocalS
         localCoverAssetRequestMap.set(song.id, (async () => {
             const fileHandle = await getAccessibleFileHandle(song);
             if (!fileHandle) {
-                // 安卓没有句柄，但字节还能从原生回环服务取回来 —— 别就这么放弃。
-                const nativeFile = await nativeAudioFile(song);
-                if (!nativeFile) return song;
-                try {
-                    return await extractAndPersistSongCover(song, null, nativeFile);
-                } catch (error) {
-                    console.warn(`[LocalMusic] Failed to ensure native embedded cover for ${song.fileName}:`, error);
-                    return song;
-                }
+                return song;
             }
 
             try {
@@ -1937,19 +1755,14 @@ export async function getAudioFromFile(file: File): Promise<string> {
 export async function deleteSongsByIds(songIds: string[]): Promise<void> {
     const uniqueSongIds = Array.from(new Set(songIds));
     if (uniqueSongIds.length === 0) return;
-    const startedAt = Date.now();
-    noteLocalLibraryDiagnostic('delete:start', { songs: uniqueSongIds.length });
-    try {
     const allSongs = await getLocalSongs();
     const deletedIdSet = new Set(uniqueSongIds);
-    const deletedSongs = allSongs.filter(song => deletedIdSet.has(song.id));
     const affectedRoots = new Set(
-        deletedSongs
+        allSongs
+            .filter(song => deletedIdSet.has(song.id))
             .map(getRootFolderName)
             .filter((root): root is string => Boolean(root)),
     );
-    // 安卓「挑选导入」的音频是复制进 App 私有目录的：库里删了，那份副本也得跟着删，
-    // 否则它会一直留着占空间（只清自己写出的 imported-*，MediaStore 的歌是引用不删）。
     uniqueSongIds.forEach(id => {
         fileHandleMap.delete(id);
         localCoverAssetRequestMap.delete(id);
@@ -1959,26 +1772,10 @@ export async function deleteSongsByIds(songIds: string[]): Promise<void> {
         dbDeleteLocalSongs(uniqueSongIds),
         ...uniqueSongIds.map(id => removeCachedCover(`cover_local_${id}`)),
     ]);
-    // 副本删除失败不该把整次删除回滚（数据库记录已经清掉了），但必须等它做完并留下诊断：
-    // 报告里的 delete:done 会写明请求了几首、删掉几份、失败几份。
-    await deleteAndroidImportedAudio(
-        deletedSongs
-            .map(song => song.nativeAudioRef)
-            .filter((ref): ref is string => Boolean(ref)),
-    ).catch(error => console.warn('[LocalMusic] Failed to delete imported android audio:', error));
     await removeDeletedSongIdsFromPlaylists(uniqueSongIds);
     await Promise.all(Array.from(affectedRoots).map(cleanupDirHandleIfUnused));
     notifyLocalMusicUpdated();
-    noteLocalLibraryDiagnostic('delete:done', { songs: uniqueSongIds.length, ms: Date.now() - startedAt });
     console.log(`[LocalMusic] Deleted ${uniqueSongIds.length} songs by ID`);
-    } catch (error) {
-        noteLocalLibraryDiagnostic('delete:error', {
-            songs: uniqueSongIds.length,
-            ms: Date.now() - startedAt,
-            message: error instanceof Error ? error.message : String(error),
-        });
-        throw error;
-    }
 }
 
 // Removes an imported root from the app, including empty roots, without deleting disk files.
@@ -2008,10 +1805,6 @@ async function removeImportedRootContents(rootFolderName: string): Promise<void>
 
 // Resync folder: refresh an imported folder in place using the persisted root handle
 export async function resyncFolder(folderName: string): Promise<LocalSong[] | null> {
-    // 安卓没有持久化的目录句柄可重扫：那边的歌来自设备音乐库，整库重扫走 resyncAllFolders，
-    // 这里不能转去 importFolder —— 那会弹一次系统文件选择器，而用户点的是「刷新」。
-    if (isAndroidNativeRuntime()) return null;
-
     // Only root imports have persisted directory handles. Derived child folders
     // should resync through their imported root folder handle.
     const rootFolderName = folderName.split('/')[0] || folderName;
@@ -2033,10 +1826,6 @@ function getLocalSongRootFolderName(song: LocalSong): string | null {
 
 // Resyncs all imported local roots once, even when the song list contains nested folders.
 export async function resyncAllFolders(): Promise<LocalSong[] | null> {
-    // 安卓：设备音乐库重扫一次就够了。挑文件夹导入的那些文件已经在 App 私有目录里，
-    // 不存在「按根重扫」这回事 —— 逐个根去调 importFolder 会连着弹好几次系统选择器。
-    if (isAndroidNativeRuntime()) return await scanAndroidDeviceMusic();
-
     const allSongs = await getLocalSongs();
     const handles = await getDirHandles();
     const rootFolderNames = Array.from(new Set(

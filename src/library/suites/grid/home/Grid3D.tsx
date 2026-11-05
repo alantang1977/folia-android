@@ -3,7 +3,6 @@ import { useTranslation } from 'react-i18next';
 import { Search, Loader2, Settings, PanelsTopLeft } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { resolveSearchSource, useSearchNavigationStore } from '../../../../stores/useSearchNavigationStore';
-import { useSearchHistoryStore } from '../../../../stores/useSearchHistoryStore';
 import { useShallow } from 'zustand/react/shallow';
 import { SongResult, LocalSong, LocalPlaylist, LocalLibraryGroup, Theme, type StatusMessage } from '../../../../types';
 import LocalGrid3DView from './LocalGrid3DView';
@@ -149,10 +148,6 @@ export const Grid3D: React.FC<Grid3DProps> = (props) => {
         submitSearch: state.submitSearch,
     })));
 
-    const searchHistory = useSearchHistoryStore(state => state.entries);
-    const clearSearchHistory = useSearchHistoryStore(state => state.clear);
-    const [searchBoxFocused, setSearchBoxFocused] = useState(false);
-
     // 来源、页签与在线列表都来自 Library Core 的首页模型（core/home/homeSources、homeCards 与首页资源）；
     // 这里只剩展示：布局、登录入口、更新徽标、扫描进度胶囊。
     const homeSources = useLibraryHomeSources({
@@ -239,9 +234,9 @@ export const Grid3D: React.FC<Grid3DProps> = (props) => {
     });
 
     // Search committed callback
-    const handleSearch = async (e?: React.FormEvent, explicitQuery?: string) => {
+    const handleSearch = async (e?: React.FormEvent) => {
         e?.preventDefault();
-        const query = (explicitQuery ?? searchQuery).trim();
+        const query = searchQuery.trim();
         if (!query) return;
 
         const searchSource = isOnlineTab ? activeProviderId : resolveSearchSource(homeViewTab);
@@ -464,14 +459,7 @@ export const Grid3D: React.FC<Grid3DProps> = (props) => {
 
                     {/* Right Search Bar */}
                     <div className="flex justify-end order-2 md:order-none">
-                        <div
-                            className="relative w-full md:w-56 transition-all focus-within:md:w-72"
-                            onFocus={() => setSearchBoxFocused(true)}
-                            onBlur={event => {
-                                if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setSearchBoxFocused(false);
-                            }}
-                        >
-                        <form onSubmit={handleSearch} className="relative w-full">
+                        <form onSubmit={handleSearch} className="relative w-full md:w-56 transition-all focus-within:md:w-72">
                             {isSearchingActive ? (
                                 <Loader2 className="absolute left-3 top-1/2 w-4 h-4 animate-spin opacity-40 -mt-2" />
                             ) : (
@@ -490,40 +478,6 @@ export const Grid3D: React.FC<Grid3DProps> = (props) => {
                                 style={{ color: 'var(--text-primary)' }}
                             />
                         </form>
-                            {searchBoxFocused && searchHistory.length > 0 && (
-                                <div
-                                    className={`absolute right-0 top-full z-40 mt-2 w-72 max-w-[80vw] overflow-hidden rounded-xl border p-2 shadow-xl ${
-                                        isDaylight ? 'border-black/10 bg-white/95' : 'border-white/10 bg-[#141418]/95'
-                                    }`}
-                                >
-                                    <div className="flex items-center justify-between px-1 pb-1.5">
-                                        <span className="text-[11px] uppercase tracking-wide opacity-40">{t('search.historyTitle')}</span>
-                                        <button
-                                            type="button"
-                                            onClick={clearSearchHistory}
-                                            className="rounded px-1.5 py-0.5 text-[11px] opacity-40 hover:opacity-80"
-                                        >
-                                            {t('search.historyClear')}
-                                        </button>
-                                    </div>
-                                    <ul className="max-h-64 overflow-y-auto">
-                                        {searchHistory.map(entry => (
-                                            <li key={entry}>
-                                                <button
-                                                    type="button"
-                                                    onMouseDown={event => event.preventDefault()}
-                                                    onClick={() => { setSearchQuery(entry); setSearchBoxFocused(false); void handleSearch(undefined, entry); }}
-                                                    className="w-full truncate rounded-lg px-2 py-1.5 text-left text-sm hover:bg-black/5 dark:hover:bg-white/10"
-                                                    title={entry}
-                                                >
-                                                    {entry}
-                                                </button>
-                                            </li>
-                                        ))}
-                                    </ul>
-                                </div>
-                            )}
-                        </div>
                     </div>
                 </div>
             </div>

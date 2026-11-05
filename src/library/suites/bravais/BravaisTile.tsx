@@ -1,8 +1,6 @@
 import React, { memo, useLayoutEffect, useRef, useState, type MouseEvent, type MutableRefObject } from 'react';
 import { WallTitle } from '../../../components/wall/WallTitle';
 import { useWallPosterArtwork } from '../../../components/wall/useWallPosterArtwork';
-import { useLatticePerformanceModeStore } from '../../../stores/useLatticePerformanceModeStore';
-import { useLatticeSettingsStore } from '../../../stores/useLatticeSettingsStore';
 import { parseWallSlotKey } from '../../../components/wall/wallSlots';
 import { countRender } from '../../../dev/renderCount';
 import { getSizedCoverUrl } from '../../../utils/coverUrl';
@@ -285,8 +283,6 @@ function BravaisTile({
     const cover = display ? (coverUrl ? `url("${coverUrl}")` : fallbackBackground(display.key)) : undefined;
     const isCurrent = Boolean(display && nowPlayingKey && display.key === nowPlayingKey);
     const isExpanded = expanded && isTrack;
-    const performanceMode = useLatticePerformanceModeStore(state => state.enabled);
-    const latticeLightsOn = useLatticeSettingsStore(state => state.latticeLightsOn);
     const form = display ? resolveBravaisTileForm(display) : 'poster';
     const isStack = form === 'stack';
     const isPortrait = form === 'portrait';
@@ -399,8 +395,8 @@ function BravaisTile({
                         )}
                         <span className="lattice-poster-shade" />
                         {/* 实测反馈 1：熄灯层（wall.css；全透明档的窗与聚焦卡等豁免在 bravais.css）。 */}
-                        {(!performanceMode || !latticeLightsOn) && <span className="lattice-poster-lights-out" />}
-                        {!performanceMode && !face.seeThrough && <span className="lattice-poster-tint" />}
+                        <span className="lattice-poster-lights-out" />
+                        {!face.seeThrough && <span className="lattice-poster-tint" />}
                         <BravaisTileBadge item={display} current={isCurrent} />
                         {(display.hideable || display.selected) && (
                             <BravaisTileMarks

@@ -173,9 +173,6 @@ export const useLyricSettingsStore = create<LyricSettingsState>((set, get) => ({
             type: 'info',
             text: i18n.t('notifications.lyricSourceChanged', { source: getLyricProviderPreferenceLabel(source) }),
         });
-        // 让正在播的这首歌立刻按新偏好重新取歌词：清掉它在所有歌词源下的缓存副本。
-        // 不这么做的话，切完设置仍会命中旧源的缓存，看起来像"切换没用"。
-        void dropCachedLyricsForEverySource();
     },
     handleSetLocalLyricsPriority: (priority) => {
         if (typeof window !== 'undefined') {
@@ -280,27 +277,3 @@ export const selectLyricSettingsSnapshot = (state: LyricSettingsState) => ({
     handleSetLyricStaffPattern: state.handleSetLyricStaffPattern,
     lyricStaffPatternError: getLyricStaffPatternError(state.lyricStaffPattern),
 });
-
-
-/**
- * 清掉当前这首歌在**所有歌词源**下的缓存副本。
- *
- * 歌词缓存的键带首选源后缀（见 resourceKeys.getSongResourceCacheKey），换源后旧键不会被读到，
- * 但旧键会一直留着占地方；这里主动删掉，避免同一首歌按每个源各存一份越积越多。
- */
-export const dropCachedLyricsForEverySource = async (): Promise<void> => {
-    try {
-        const { usePlaybackStore } = await import('./usePlaybackStore');
-        const { getSongResourceCacheKey } = await import('../services/onlineMusic/resourceKeys');
-        const { removeFromCache } = await import('../services/db');
-        const { LYRIC_SOURCE_IDS } = await import('../utils/lyrics/lyricSources');
-        const song = usePlaybackStore.getState().currentSong;
-        if (!song) return;
-        await Promise.all([
-            removeFromCache(getSongResourceCacheKey('lyric', song, null)),
-            ...LYRIC_SOURCE_IDS.map(source => removeFromCache(getSongResourceCacheKey('lyric', song, source))),
-        ]);
-    } catch (error) {
-        console.warn('[Lyrics] 清歌词缓存失败（不影响本次切换）：', error);
-    }
-};

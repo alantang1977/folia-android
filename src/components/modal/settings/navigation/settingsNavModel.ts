@@ -81,8 +81,8 @@ export const SETTINGS_NAV_GROUP_SPECS: GroupSpec[] = [
         id: 'advanced',
         labelKey: 'options.settingsGroupAdvanced',
         sections: [
-            // 桌面走主进程加载，手机端由 mods/android/androidModsBridge.ts 在窗口里应答同一组调用。
-            { id: 'mods', icon: Boxes, labelKey: 'options.settingsPageMods' },
+            // The loader only exists in the desktop main process; on web there is nothing to switch on.
+            { id: 'mods', icon: Boxes, labelKey: 'options.settingsPageMods', electronOnly: true },
             { id: 'developer', icon: Terminal, labelKey: 'options.settingsPageDeveloper' },
         ],
     },

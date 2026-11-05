@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { motion, useDragControls, useMotionValue, useTransform } from 'framer-motion';
+import { motion, useDragControls, useMotionValue } from 'framer-motion';
 import { X } from 'lucide-react';
 
 // src/components/shared/DraggableDebugWindow.tsx
@@ -39,11 +39,6 @@ interface DraggableDebugWindowProps {
      * dragged, the remembered position wins.
      */
     defaultOffset?: { x: number; y: number };
-    /**
-     * 整体缩放。手机屏幕窄，窗口按桌面尺寸摆进来会糊到看不出曲线，
-     * 这里等比缩小（锚点仍是右上角），拖动的位移按同一比例换算，手指跟手。
-     */
-    scale?: number;
     children: React.ReactNode;
 }
 
@@ -69,7 +64,6 @@ const DraggableDebugWindow: React.FC<DraggableDebugWindowProps> = ({
     onClose,
     widthClass = 'w-[min(34rem,calc(100vw-2rem))]',
     defaultOffset = { x: 0, y: 0 },
-    scale = 1,
     children,
 }) => {
     const controls = useDragControls();
@@ -77,10 +71,6 @@ const DraggableDebugWindow: React.FC<DraggableDebugWindowProps> = ({
     const stored = useRef(readStored(id, defaultOffset)).current;
     const x = useMotionValue(stored.x);
     const y = useMotionValue(stored.y);
-    // x/y 记的是屏幕像素（拖动给出的就是屏幕位移）；元素里的 transform 处在 scale 之下，
-    // 除以 scale 之后视觉位移才和手指一致。
-    const visualX = useTransform(x, value => value / scale);
-    const visualY = useTransform(y, value => value / scale);
 
     /**
      * Pulls the window back if it has been dragged - or resized - off the edge, and writes the
@@ -108,12 +98,9 @@ const DraggableDebugWindow: React.FC<DraggableDebugWindowProps> = ({
 
     useEffect(() => {
         settle();
-        // 缩放过的窗口（手机）不跟 resize 走：软键盘、系统栏、旋转都会触发 resize，
-        // 而缩放后的 rect 与记录的位置不在同一坐标系，一夹边就会“突然弹回原位”。
-        if (scale !== 1) return;
         window.addEventListener('resize', settle);
         return () => window.removeEventListener('resize', settle);
-    }, [settle, scale]);
+    }, [settle]);
 
     const shellClass = isDaylight
         ? 'bg-white/76 text-zinc-900 border border-black/10 shadow-[0_18px_60px_rgba(0,0,0,0.14)]'
@@ -122,13 +109,10 @@ const DraggableDebugWindow: React.FC<DraggableDebugWindowProps> = ({
     return createPortal(
         // z-300: above the modals, because a dialog is often the thing being debugged. Below the
         // 9999 titlebar drag strip, which paints nothing and takes no pointer events.
-        <div
-            className={`pointer-events-none fixed top-4 right-4 z-[300] ${widthClass}`}
-            style={scale === 1 ? undefined : { transform: `scale(${scale})`, transformOrigin: 'top right' }}
-        >
+        <div className={`pointer-events-none fixed top-4 right-4 z-[300] ${widthClass}`}>
             <motion.div
                 ref={frameRef}
-                style={{ x: visualX, y: visualY }}
+                style={{ x, y }}
                 drag
                 dragListener={false}
                 dragControls={controls}

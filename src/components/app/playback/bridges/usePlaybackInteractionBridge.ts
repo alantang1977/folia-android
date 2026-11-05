@@ -137,16 +137,6 @@ export function usePlaybackInteractionBridge({
     const togglePlay = useCallback((event?: React.MouseEvent | KeyboardEvent) => {
         event?.stopPropagation();
 
-        console.log('[PlayDIAG] togglePlay', {
-            isNowPlayingStageActive,
-            playerState,
-            audioPaused: audioRef.current?.paused ?? null,
-            audioReady: audioRef.current?.readyState ?? null,
-            audioSrc: audioSrc ? 'yes' : 'no',
-            fadeOut: playbackFade.isFadingOut(),
-            context: activePlaybackContext,
-        });
-
         if (isNowPlayingStageActive) {
             return;
         }

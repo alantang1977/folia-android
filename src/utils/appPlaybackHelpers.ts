@@ -56,12 +56,6 @@ export const getAudioSrcKind = (audioSrc: string | null): 'empty' | 'blob' | 'ht
     return 'other';
 };
 
-// 原生 App（Capacitor Android/iOS）：与 Electron 一致，保留酷狗的原始 HTTP 媒体地址。
-const isNativePlaybackRuntime = (): boolean => (
-    typeof window !== 'undefined'
-    && Boolean((window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.())
-);
-
 export const toSafeRemoteUrl = (url: string | null | undefined): string | null | undefined => {
     if (!url) {
         return url;
@@ -80,10 +74,6 @@ export const toSafeRemoteUrl = (url: string | null | undefined): string | null |
             parsedUrl.hostname.startsWith('fs.') &&
             parsedUrl.hostname.endsWith('.kugou.com')
         ) {
-            // 酷狗的 fs 媒体域名多数只开 HTTP：VIP 的 fs.youthandroid2.kugou.com 完全没有 TLS 监听，
-            // 改写成 https 会直接连不上（播放开始几百毫秒后就停）。原生端与 Electron 一样保留原协议，
-            // WebView 由 Capacitor 的 allowMixedContent 放行 http 媒体。
-            if (isNativePlaybackRuntime()) return normalizedUrl;
             return normalizedUrl.replace(/^http:/, 'https:');
         }
     } catch {

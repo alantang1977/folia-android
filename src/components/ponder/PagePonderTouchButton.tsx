@@ -27,18 +27,8 @@ import { ponderLayerTokens, ponderWindowTokens } from './ponderTheme';
 /** 露出来之后停留多久。够读一眼，又不至于一直杵在那里。 */
 const REVEAL_MS = 4000;
 
-/** 视觉尺寸：原本 48px 的 70%。 */
-const BUTTON_SIZE_PX = 34;
-/** 离屏幕右边的距离，沿用原来的 right-5。 */
-const BUTTON_RIGHT_PX = 20;
-/**
- * 向下让开的状态栏 / 刘海 / 手势区：往下挪自身高度的 1.5 倍（按缩小后的尺寸算）。
- * 用 top 定位而不是 transform，免的和露出/收起时的 scale 抢同一个属性。
- */
-const BUTTON_OFFSET_DOWN_PX = Math.round(BUTTON_SIZE_PX * 1.5);
-const BUTTON_TOP_PX = 20 + BUTTON_OFFSET_DOWN_PX;
-/** 热区在按钮四周外扩的边距，px。按触摸目标给，不按视觉尺寸给。 */
-const HOTSPOT_PAD_PX = 14;
+/** 右上角热区的边长，px。按触摸目标给，不按视觉尺寸给。 */
+const HOTSPOT_SIZE_PX = 96;
 
 type PagePonderTouchButtonProps = {
     theme?: Theme;
@@ -106,10 +96,8 @@ const PagePonderTouchButton: React.FC<PagePonderTouchButtonProps> = ({ theme, is
                 return;
             }
 
-            // 热区跟着按钮走：按钮挪下去、缩小之后，右上角那块「叫它出来」的地方不能还留在原地。
-            const inHotspot = event.clientY >= BUTTON_TOP_PX - HOTSPOT_PAD_PX
-                && event.clientY <= BUTTON_TOP_PX + BUTTON_SIZE_PX + HOTSPOT_PAD_PX
-                && event.clientX >= window.innerWidth - (BUTTON_RIGHT_PX + BUTTON_SIZE_PX + HOTSPOT_PAD_PX);
+            const inHotspot = event.clientY <= HOTSPOT_SIZE_PX
+                && event.clientX >= window.innerWidth - HOTSPOT_SIZE_PX;
             if (!inHotspot) {
                 // 手指落在别处，上一面没用掉的旗就作废 —— 免得它留到下一次真正的点击上。
                 suppressNextClickRef.current = false;
@@ -144,23 +132,16 @@ const PagePonderTouchButton: React.FC<PagePonderTouchButtonProps> = ({ theme, is
             aria-label={t('ponder.openPage')}
             // 收起来之后不可点：留着可点的话，右上角会变成一块看不见却能按的地方。
             // 出来时淡入、从略小长到位；关了微动效就只淡入淡出。
-            className={`fixed z-[190] rounded-full transition-[opacity,transform] active:scale-95 ${
+            className={`fixed right-5 top-5 z-[190] h-12 w-12 rounded-full transition-[opacity,transform] active:scale-95 ${
                 isRevealed ? 'pd-t-enter opacity-100' : `pd-t-base pointer-events-none opacity-0 ${calm ? '' : 'scale-[0.94]'}`
             }`}
-            style={{
-                top: BUTTON_TOP_PX,
-                right: BUTTON_RIGHT_PX,
-                width: BUTTON_SIZE_PX,
-                height: BUTTON_SIZE_PX,
-                ...ponderLayerTokens(isDaylight, theme),
-                ...ponderMotionTokens(calm),
-            }}
+            style={{ ...ponderLayerTokens(isDaylight, theme), ...ponderMotionTokens(calm) }}
         >
             <span
                 className="grid h-full w-full place-items-center rounded-full bg-[var(--st-card)] text-[color:var(--st-t1)] shadow-[0_0_0_1px_var(--st-line),0_8px_20px_rgba(0,0,0,0.25)]"
                 style={ponderWindowTokens(isDaylight, theme, calm)}
             >
-                <Lightbulb size={14} aria-hidden="true" />
+                <Lightbulb size={20} aria-hidden="true" />
             </span>
         </button>
     );

@@ -3,8 +3,7 @@ import { getStoredBoolean, getStoredString, setStoredBoolean } from './storagePr
 
 // src/stores/useLatticeSettingsStore.ts
 // Persistent queue-collage preferences. Deliberately separate from useLatticeControlsStore: that
-// store only publishes runtime actions from the currently mounted wall.
-const LATTICE_PERFORMANCE_MODE_KEY = 'lattice_performance_mode';
+// store only publishes runtime state of the currently mounted wall.
 
 const LATTICE_VIGNETTE_KEY = 'lattice_vignette';
 const LATTICE_AUTO_FOCUS_ON_SONG_CHANGE_KEY = 'lattice_auto_focus_on_song_change';
@@ -27,7 +26,6 @@ const getStoredPosterTintIntensity = () => {
 };
 
 export type LatticeSettingsState = {
-    latticePerformanceMode: boolean;
     latticeVignette: boolean;
     autoFocusOnSongChange: boolean;
     latticeLightsOn: boolean;
@@ -41,7 +39,6 @@ export type LatticeSettingsState = {
      * 放在这个 store 里，bravais ↔ Lattice 交接时两面墙读同一份。
      */
     wallToolsQueueIslandOpen: boolean;
-    handleToggleLatticePerformanceMode: (enabled: boolean) => void;
     handleToggleLatticeVignette: (enabled: boolean) => void;
     handleToggleAutoFocusOnSongChange: (enabled: boolean) => void;
     handleToggleLatticeLights: (enabled: boolean) => void;
@@ -53,7 +50,6 @@ export type LatticeSettingsState = {
 };
 
 export const useLatticeSettingsStore = create<LatticeSettingsState>(set => ({
-    latticePerformanceMode: getStoredBoolean(LATTICE_PERFORMANCE_MODE_KEY, true),
     latticeVignette: getStoredBoolean(LATTICE_VIGNETTE_KEY, true),
     autoFocusOnSongChange: getStoredBoolean(LATTICE_AUTO_FOCUS_ON_SONG_CHANGE_KEY, true),
     latticeLightsOn: getStoredBoolean(LATTICE_LIGHTS_ON_KEY, true),
@@ -62,10 +58,6 @@ export const useLatticeSettingsStore = create<LatticeSettingsState>(set => ({
     latticePosterTintColor: normalizePosterTintColor(getStoredString(LATTICE_POSTER_TINT_COLOR_KEY, DEFAULT_POSTER_TINT_COLOR)),
     latticePosterTintIntensity: getStoredPosterTintIntensity(),
     wallToolsQueueIslandOpen: getStoredBoolean(WALL_TOOLS_QUEUE_ISLAND_OPEN_KEY, false),
-    handleToggleLatticePerformanceMode: (enabled) => {
-        set({ latticePerformanceMode: enabled });
-        setStoredBoolean(LATTICE_PERFORMANCE_MODE_KEY, enabled);
-    },
     handleToggleLatticeVignette: (enabled) => {
         set({ latticeVignette: enabled });
         setStoredBoolean(LATTICE_VIGNETTE_KEY, enabled);

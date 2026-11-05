@@ -4,7 +4,6 @@ import type { WallSlot } from '../../../components/wall/wallSlots';
 import { BRAVAIS_BLOCK_SHAPE, collectShapeSlots } from './bravaisWallShape';
 import { FLIP_MAX_TILES } from '../../../components/wall/flipPlan';
 import { useDevicePixelRatio, useMediaQuery } from '../../../hooks/useMediaQuery';
-import { useLatticePerformanceModeStore } from '../../../stores/useLatticePerformanceModeStore';
 import { LIBRARY_WALL_PORTRAIT_QUERY, resolveLibraryWallSeamHorizontal } from '../../../utils/libraryWallSeamDirection';
 import { useReducedMotionFor } from '../../../hooks/useReducedMotionFor';
 import { useLatticeSettingsStore } from '../../../stores/useLatticeSettingsStore';
@@ -143,7 +142,6 @@ const BravaisStage: React.FC<LibrarySuiteStageProps> = ({
     // B11：换层的翻牌 / 波次按「降低动态效果」降级成淡入淡出（lattice 或 collectionMorph，见 bravaisMotion）。
     const reducedTransitions = useBravaisReducedTransitions();
     const devicePixelRatio = useDevicePixelRatio();
-    const performanceMode = useLatticePerformanceModeStore(state => state.enabled);
     const vignette = useLatticeSettingsStore(state => state.latticeVignette);
     const lightsOn = useLatticeSettingsStore(state => state.latticeLightsOn);
     const tintEnabled = useLatticeSettingsStore(state => state.latticePosterTintEnabled);
@@ -534,7 +532,6 @@ const BravaisStage: React.FC<LibrarySuiteStageProps> = ({
         seamLook.seamClear ? 'has-clear-seam' : '',
         seamLook.backdropBlur ? 'has-backdrop-blur' : '',
         seeThrough && BRAVAIS_SEAM_ACRYLIC_BLUR ? 'has-seam-blur' : '',
-        performanceMode ? 'is-performance' : '',
         display?.layer.seam.home?.manage ? 'is-managing-hidden' : '',
         display?.layer.home?.batch ? 'is-batch' : '',
         // 歌手海报在场：墙上的磁贴改成海报的样子（间隔拉开、封面保持正方形，bravaisPoster.css）。
@@ -598,9 +595,7 @@ const BravaisStage: React.FC<LibrarySuiteStageProps> = ({
                     expandedSlotKey={focus.expandedSlotKey}
                     focusedSlotKey={focus.focusedSlotKey}
                     linkedKey={panelFor !== null && panelFor === display?.layer.key ? linkedKey : null}
-                    pixelScale={performanceMode
-                        ? Math.min((view?.scale ?? 1) * devicePixelRatio, 1)
-                        : (view?.scale ?? 1) * devicePixelRatio}
+                    pixelScale={(view?.scale ?? 1) * devicePixelRatio}
                     reducedMotion={reducedTransitions}
                     didDragRef={camera.pointer.didDragRef}
                     handlers={interactions.handlers}

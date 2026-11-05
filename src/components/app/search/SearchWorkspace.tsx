@@ -12,7 +12,6 @@ import {
 import SearchResultsList from './SearchResultsList';
 import { useCollectionNavigationStore } from '../../../stores/useCollectionNavigationStore';
 import { useOnlineProviderAccountStore } from '../../../stores/useOnlineProviderAccountStore';
-import { useSearchHistoryStore } from '../../../stores/useSearchHistoryStore';
 import { omni } from '../../../services/onlineMusic/omni';
 
 // src/components/app/search/SearchWorkspace.tsx
@@ -21,8 +20,7 @@ type SearchWorkspaceProps = {
     theme: Theme;
     isDaylight: boolean;
     onClose: () => void;
-    /** 提交搜索；`query` 给了就用它（点最近搜索里的一条），没给就用搜索框里现在的词。 */
-    onSubmitSearch: (source?: SearchSource, query?: string) => void;
+    onSubmitSearch: (source?: SearchSource) => void;
     onLoadMore: () => void;
     onPlayTrack: (track: UnifiedSong) => void;
     onAddTrackToQueue: (track: UnifiedSong) => void;
@@ -81,12 +79,6 @@ const SearchWorkspace: React.FC<SearchWorkspaceProps> = ({
     const activeOnlineProviderId = useOnlineProviderAccountStore(state => state.activeProviderId);
     const sources = useMemo<SearchSource[]>(() => [activeOnlineProviderId, 'local', 'navidrome'], [activeOnlineProviderId]);
     const hasCollection = useCollectionNavigationStore(state => Boolean(state.snapshot?.stack.length));
-    const historyEntries = useSearchHistoryStore(state => state.entries);
-    const removeHistoryEntry = useSearchHistoryStore(state => state.remove);
-    const clearHistory = useSearchHistoryStore(state => state.clear);
-    const trimmedQuery = searchQuery.trim();
-    // 搜索框空着的时候，结果区换成最近搜索过的那几个词。
-    const showHistory = trimmedQuery.length === 0 && historyEntries.length > 0;
     const getSourceLabel = (source: SearchSource) => {
         if (source === 'local') return t('search.sourceLocal');
         if (source === 'navidrome') return t('search.sourceNavidrome');
@@ -185,30 +177,7 @@ const SearchWorkspace: React.FC<SearchWorkspaceProps> = ({
                         </nav>
                     </header>
 
-                    <div className="mx-auto mt-3 flex min-h-0 w-full max-w-5xl flex-1 flex-col">
-                        {historyEntries.length > 0 && trimmedQuery.length > 0 && (
-                            <div className="mb-2 flex shrink-0 items-center gap-2 overflow-x-auto pb-1">
-                                <span className="shrink-0 text-[11px] uppercase tracking-wide opacity-40">
-                                    {t('search.historyTitle')}
-                                </span>
-                                {historyEntries.slice(0, 8).map(entry => (
-                                    <button
-                                        key={entry}
-                                        type="button"
-                                        onClick={() => onSubmitSearch(undefined, entry)}
-                                        title={entry}
-                                        className={`st-t-fast max-w-[45vw] shrink-0 truncate rounded-full px-3 py-1.5 text-xs ${
-                                            isDaylight
-                                                ? 'bg-black/[0.05] hover:bg-black/10'
-                                                : 'bg-white/[0.06] hover:bg-white/10'
-                                        }`}
-                                    >
-                                        {entry}
-                                    </button>
-                                ))}
-                            </div>
-                        )}
-                        <div className="flex min-h-0 flex-1 flex-col">
+                    <div className="mx-auto mt-3 min-h-0 w-full max-w-5xl flex-1">
                         {isSearching ? (
                             <div className="flex h-full items-center justify-center">
                                 <Loader2 className="h-9 w-9 animate-spin opacity-45" />
@@ -217,9 +186,6 @@ const SearchWorkspace: React.FC<SearchWorkspaceProps> = ({
                             <div className="flex h-full flex-col items-center justify-center gap-3 text-center opacity-65">
                                 <AlertCircle size={32} />
                                 <p>{t('search.error')}</p>
-                                {searchError && searchError !== 'search_failed' && (
-                                    <p className="max-w-[82vw] break-words px-2 text-xs opacity-55">{searchError}</p>
-                                )}
                                 <button
                                     type="button"
                                     onClick={() => onSubmitSearch()}
@@ -227,48 +193,6 @@ const SearchWorkspace: React.FC<SearchWorkspaceProps> = ({
                                 >
                                     {t('search.retry')}
                                 </button>
-                            </div>
-                        ) : showHistory ? (
-                            <div className="flex h-full flex-col">
-                                <div className="flex shrink-0 items-center justify-between px-1 pb-2">
-                                    <span className="text-xs font-medium opacity-55">{t('search.historyTitle')}</span>
-                                    <button
-                                        type="button"
-                                        onClick={clearHistory}
-                                        className="rounded-full px-2 py-1 text-xs opacity-45 transition-opacity hover:opacity-80"
-                                    >
-                                        {t('search.historyClear')}
-                                    </button>
-                                </div>
-                                <ul className="flex min-h-0 flex-1 flex-wrap content-start gap-2 overflow-y-auto pb-4">
-                                    {historyEntries.map(entry => (
-                                        <li
-                                            key={entry}
-                                            className={`st-t-fast flex items-center gap-1 rounded-full pl-3.5 pr-1.5 ${
-                                                isDaylight
-                                                    ? 'bg-black/[0.06] hover:bg-black/10'
-                                                    : 'bg-white/[0.07] hover:bg-white/[0.12]'
-                                            }`}
-                                        >
-                                            <button
-                                                type="button"
-                                                onClick={() => onSubmitSearch(undefined, entry)}
-                                                className="max-w-[60vw] truncate py-2 text-sm"
-                                                title={entry}
-                                            >
-                                                {entry}
-                                            </button>
-                                            <button
-                                                type="button"
-                                                onClick={() => removeHistoryEntry(entry)}
-                                                aria-label={t('search.historyRemove')}
-                                                className="rounded-full p-1.5 opacity-40 transition-opacity hover:opacity-90"
-                                            >
-                                                <X size={12} />
-                                            </button>
-                                        </li>
-                                    ))}
-                                </ul>
                             </div>
                         ) : results.length === 0 ? (
                             <div className="flex h-full items-center justify-center text-sm opacity-50">
@@ -318,7 +242,6 @@ const SearchWorkspace: React.FC<SearchWorkspaceProps> = ({
                                 )}
                             </div>
                         )}
-                        </div>
                     </div>
                 </motion.section>
             )}

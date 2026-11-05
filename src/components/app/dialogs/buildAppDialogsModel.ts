@@ -47,7 +47,6 @@ export type AppDialogsDeps = {
         originalSong: SongResult;
         replacementSong: SongResult;
         typeDesc?: string;
-        why?: 'taken-down' | 'unplayable';
     } | null;
     setPendingUnavailableReplacement: React.Dispatch<React.SetStateAction<any>>;
     handleUnavailableReplacementConfirm: () => Promise<void>;
@@ -117,7 +116,6 @@ export const buildAppDialogsModel = ({
         originalSong: pendingUnavailableReplacement?.originalSong || null,
         replacementSong: pendingUnavailableReplacement?.replacementSong || null,
         typeDesc: pendingUnavailableReplacement?.typeDesc,
-        why: pendingUnavailableReplacement?.why,
         isDaylight,
         onClose: () => setPendingUnavailableReplacement(null),
         onConfirm: handleUnavailableReplacementConfirm,

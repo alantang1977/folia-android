@@ -41,12 +41,14 @@ from pathlib import Path
 # ============================================================================
 
 # Android 主基准仓库（必须保留的功能底基）
+# 锁定 v2.3.0 release tag，不用 main 分支
 ANDROID_BASE_REPO = "https://github.com/Timingyyds/folia-android.git"
-ANDROID_BASE_BRANCH = "main"
+ANDROID_BASE_BRANCH = "v2.3.0"
 
 # 上游辅助仓库（只取新功能）
+# 自动检测最新 tag，不用固定 main
 UPSTREAM_REPO = "https://github.com/chthollyphile/folia-major.git"
-UPSTREAM_BRANCH = "main"
+UPSTREAM_BRANCH = "main"  # 作为 fallback，实际会自动检测最新 tag
 
 # 你的仓库
 TARGET_OWNER = "alantang1977"
@@ -69,6 +71,17 @@ SHARED_DIRS = [
 # 这些是安卓桥接核心代码，必须完整无误
 FORCE_RESTORE_DIRS = [
     "src/audioNative",
+]
+
+# 安卓特定文件/目录：必须从 Timingyyds 保留（不被上游覆盖）
+# 这些文件集成了安卓桥接，用上游版本会丢失安卓功能
+ANDROID_PATHS = [
+    "src/audioNative",
+    "src/App.tsx",
+    "src/bootstrap.tsx",
+    "src/index.tsx",
+    "src/services/onlineMusic",
+    "src/services/automix/stems.ts",
 ]
 
 # 顶层文件：仅当 Timingyyds 没有时才新增
@@ -158,6 +171,36 @@ def gh_api(method, path, token, body=None):
 # 第一步：克隆两个参考仓库
 # ============================================================================
 
+def get_latest_upstream_tag():
+    """自动检测上游最新正式版本 tag（vX.Y.Z 格式，排除 canary/beta）"""
+    import subprocess as sp
+    log("检测上游最新版本 tag ...")
+    r = sp.run(
+        ["git", "ls-remote", "--tags", UPSTREAM_REPO],
+        capture_output=True, text=True,
+    )
+    tags = []
+    for line in r.stdout.strip().splitlines():
+        if not line:
+            continue
+        parts = line.split("\t")
+        if len(parts) < 2:
+            continue
+        tag = parts[1].replace("refs/tags/", "").replace("^{}", "")
+        # 只要正式版本 vX.Y.Z
+        if re.match(r"^v\d+\.\d+\.\d+$", tag):
+            tags.append(tag)
+    if not tags:
+        log("未检测到正式 tag，使用 main 分支", "WARN")
+        return "main"
+    # 按版本号排序取最新
+    def ver_key(t):
+        return [int(x) for x in re.findall(r"\d+", t)]
+    latest = sorted(tags, key=ver_key)[-1]
+    log(f"上游最新版本: {latest}")
+    return latest
+
+
 def setup():
     ci_ws = os.environ.get("GITHUB_WORKSPACE", "")
     if ci_ws:
@@ -171,19 +214,20 @@ def setup():
         run(["git", "clone", "--depth", "50", "--branch", TARGET_BRANCH,
              url, str(target_dir)])
 
-    # 克隆 Timingyyds（安卓主基准）
+    # 克隆 Timingyyds v2.3.0（安卓主基准）
     ab_dir = Path(tempfile.mkdtemp(prefix="folia_base_"))
-    log(f"克隆 Android 主基准: {ANDROID_BASE_REPO}")
+    log(f"克隆 Android 主基准: {ANDROID_BASE_REPO} @ {ANDROID_BASE_BRANCH}")
     run(["git", "clone", "--depth", "1", "--branch", ANDROID_BASE_BRANCH,
          ANDROID_BASE_REPO, str(ab_dir)])
 
-    # 克隆上游（新功能参考）
+    # 克隆上游最新版本（自动检测 tag）
+    up_tag = get_latest_upstream_tag()
     up_dir = Path(tempfile.mkdtemp(prefix="folia_upstream_"))
-    log(f"克隆上游参考: {UPSTREAM_REPO}")
-    run(["git", "clone", "--depth", "1", "--branch", UPSTREAM_BRANCH,
+    log(f"克隆上游: {UPSTREAM_REPO} @ {up_tag}")
+    run(["git", "clone", "--depth", "1", "--branch", up_tag,
          UPSTREAM_REPO, str(up_dir)])
 
-    return target_dir, ab_dir, up_dir
+    return target_dir, ab_dir, up_dir, up_tag
 
 
 # ============================================================================
@@ -206,25 +250,56 @@ def sync_additive(ab_dir, up_dir, target_dir, dry_run):
     2. 再向上叠加上游独有的新文件（新功能）
     3. Timingyyds 已有的文件永不覆盖
     """
-    # ---- 第 0 步：强制恢复安卓关键目录（每次都完整覆盖）----
-    log("\n--- 步骤0: 强制恢复安卓关键目录 ---")
-    for dirname in FORCE_RESTORE_DIRS:
-        ab_d = ab_dir / dirname
-        dst_d = target_dir / dirname
-        if not ab_d.exists():
-            log(f"  跳过(底基无此目录): {dirname}/")
-            continue
-        if dst_d.exists():
-            log(f"  删除旧: {dirname}/")
-            if not dry_run:
-                shutil.rmtree(dst_d)
-        log(f"  强制恢复: {dirname}/")
-        if not dry_run:
-            shutil.copytree(ab_d, dst_d, symlinks=True)
+def is_android_path(rel_str):
+    """判断是否是安卓特定路径（必须从 Timingyyds 保留）"""
+    rel_str = rel_str.replace("\\", "/").lstrip("./")
+    for p in ANDROID_PATHS:
+        p = p.replace("\\", "/")
+        if rel_str == p or rel_str.startswith(p + "/"):
+            return True
+    return False
 
-    # ---- 第 0.5 步：修补缺失的 reference/router stub ----
-    # Timingyyds 的 referenceBridge.ts 导入了 ./reference/router，
-    # 但 reference/ 目录在 .gitignore 中不提交，需要自动生成 stub
+
+def sync_additive(ab_dir, up_dir, target_dir, dry_run):
+    """
+    新策略：上游最新 Web 代码为底基 + Timingyyds 安卓桥接覆盖
+    - 上游 src/ 作为底基（最新 UI，无版本不匹配）
+    - Timingyyds 的安卓特定文件覆盖上去（audioNative、App.tsx 等）
+    - 上游独有目录全量新增
+    """
+    # ---- 第 1 步：上游 src/ 作为底基（覆盖到 target）----
+    log("\n--- 步骤1: 上游最新 src/ 作为底基 ---")
+    up_src = up_dir / "src"
+    dst_src = target_dir / "src"
+    if up_src.exists():
+        # 先删除 target 的 src/（旧的 Timingyyds 版本）
+        if dst_src.exists():
+            log("  删除旧 src/，替换为上游最新版")
+            if not dry_run:
+                shutil.rmtree(dst_src)
+        log("  复制上游 src/ 底基")
+        if not dry_run:
+            shutil.copytree(up_src, dst_src, symlinks=True)
+
+    # ---- 第 2 步：Timingyyds 安卓特定文件覆盖上去 ----
+    log("\n--- 步骤2: 覆盖 Timingyyds 安卓桥接文件 ---")
+    android_files_count = 0
+    for root, dirs, files in os.walk(ab_dir / "src"):
+        dirs[:] = [d for d in dirs if d != ".git"]
+        for f in files:
+            ab_file = Path(root) / f
+            rel = ab_file.relative_to(ab_dir / "src")
+            rel_str = f"src/{rel}"
+            if not is_android_path(rel_str):
+                continue
+            dst_file = target_dir / rel_str
+            if not dry_run:
+                dst_file.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(ab_file, dst_file)
+            android_files_count += 1
+    log(f"安卓桥接文件覆盖: {android_files_count} 个")
+
+    # ---- 第 2.5 步：修补缺失的 reference/router stub ----
     ref_dir = target_dir / "src" / "audioNative" / "reference"
     ref_router = ref_dir / "router.ts"
     if not ref_router.exists():
@@ -246,90 +321,50 @@ def sync_additive(ab_dir, up_dir, target_dir, dry_run):
                 encoding="utf-8",
             )
 
-    # ---- 第 1 步：确保 Timingyyds 代码在 target_dir 里 ----
-    log("\n--- 步骤1: 确保 Timingyyds 安卓底基完整 ---")
-    base_files_added = 0
-    for root, dirs, files in os.walk(ab_dir):
-        dirs[:] = [d for d in dirs if d != ".git"]
-        for f in files:
-            ab_file = Path(root) / f
-            rel = ab_file.relative_to(ab_dir)
-            rel_str = str(rel)
-            if is_preserved(rel_str):
-                continue
-            dst_file = target_dir / rel
-            if not dst_file.exists():
-                log(f"  补充底基文件: {rel_str}")
-                if not dry_run:
-                    dst_file.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(ab_file, dst_file)
-                base_files_added += 1
-    log(f"底基补充完成: {base_files_added} 个文件")
-
-    # ---- 第 2 步：上游独有目录全量新增 ----
-    log("\n--- 步骤2: 新增上游独有目录 ---")
+    # ---- 第 3 步：上游独有目录全量新增 ----
+    log("\n--- 步骤3: 新增上游独有目录 ---")
     for dirname in ADDITIVE_DIRS:
         up_d = up_dir / dirname
-        ab_d = ab_dir / dirname
         if not up_d.exists():
             continue
+        ab_d = ab_dir / dirname
         if ab_d.exists():
-            log(f"跳过(已有): {dirname}/")
+            log(f"  跳过(已有): {dirname}/")
             continue
         dst = target_dir / dirname
         if dst.exists():
-            log(f"跳过(目标已有): {dirname}/")
+            log(f"  跳过(目标已有): {dirname}/")
             continue
-        log(f"新增上游目录: {dirname}/")
+        log(f"  新增上游目录: {dirname}/")
         if not dry_run:
             shutil.copytree(up_d, dst, symlinks=True)
 
-    # ---- 第 3 步：共有目录里只新增上游独有的文件 ----
-    log("\n--- 步骤3: 增量新增上游独有文件（不覆盖已有） ---")
-    new_files_count = 0
+    # ---- 第 4 步：其他共享目录用上游最新版 ----
+    log("\n--- 步骤4: 其他共享目录用上游最新版 ---")
     for dirname in SHARED_DIRS:
+        if dirname == "src":
+            continue  # src 已在步骤1处理
         up_d = up_dir / dirname
-        ab_d = ab_dir / dirname
         if not up_d.exists():
             continue
         if is_preserved(dirname):
             continue
+        dst_d = target_dir / dirname
+        if dst_d.exists():
+            if not dry_run:
+                shutil.rmtree(dst_d)
+        log(f"  替换为上游版: {dirname}/")
+        if not dry_run:
+            shutil.copytree(up_d, dst_d, symlinks=True)
 
-        for root, dirs, files in os.walk(up_d):
-            for f in files:
-                up_file = Path(root) / f
-                rel = up_file.relative_to(up_d)
-                rel_str = f"{dirname}/{rel}"
-                if is_preserved(rel_str):
-                    continue
-
-                ab_file = ab_d / rel
-                dst_file = target_dir / dirname / rel
-
-                # Timingyyds 没有这个文件 → 上游新增的 → 加进来
-                if not ab_file.exists():
-                    if not dst_file.exists():
-                        log(f"  新增上游文件: {rel_str}")
-                        if not dry_run:
-                            dst_file.parent.mkdir(parents=True, exist_ok=True)
-                            shutil.copy2(up_file, dst_file)
-                        new_files_count += 1
-
-    log(f"上游新增文件: {new_files_count} 个")
-
-    # ---- 第 4 步：顶层文件只在 Timingyyds 没有时才新增 ----
-    log("\n--- 步骤4: 新增上游顶层文件 ---")
+    # ---- 第 5 步：顶层文件用上游最新版（保留 README）----
+    log("\n--- 步骤5: 顶层文件同步 ---")
     for fname in ADDITIVE_TOP_FILES:
         up_f = up_dir / fname
-        ab_f = ab_dir / fname
         if not up_f.exists():
             continue
-        if ab_f.exists():
-            continue
         dst = target_dir / fname
-        if dst.exists():
-            continue
-        log(f"  新增: {fname}")
+        log(f"  同步: {fname}")
         if not dry_run:
             shutil.copy2(up_f, dst)
 
@@ -499,13 +534,16 @@ def commit_and_push(target_dir, version, up_commit, dry_run):
     log("推送完成")
 
 
-def create_release(target_dir, version, apk_path, token, dry_run):
+def create_release(target_dir, version, apk_path, token, dry_run, up_tag=""):
     tag = f"v{version}"
     name = f"Folia Android v{version}"
-    body = (f"以 [Timingyyds/folia-android]"
-            f"(https://github.com/Timingyyds/folia-android) 为安卓底基，\n"
+    up_line = f"- 上游版本: {up_tag}\n" if up_tag else ""
+    body = (f"以 [Timingyyds/folia-android v2.3.0]"
+            f"(https://github.com/Timingyyds/folia-android/tree/v2.3.0) 为安卓底基，\n"
             f"叠加 [chthollyphile/folia-major]"
             f"(https://github.com/chthollyphile/folia-major) 最新功能构建。\n\n"
+            f"- 安卓底基: v2.3.0\n"
+            f"{up_line}"
             f"- 版本: v{version}\n"
             f"- 构建时间: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}\n\n"
             f"下载下方 APK 安装。")
@@ -595,14 +633,26 @@ def main():
     log("=" * 50)
     log(f"模式: {'dry-run' if args.dry_run else '正式'}")
 
-    target_dir, ab_dir, up_dir = setup()
+    target_dir, ab_dir, up_dir, up_tag = setup()
 
     ab_pkg = json.loads((ab_dir / "package.json").read_text(encoding="utf-8"))
     up_pkg = json.loads((up_dir / "package.json").read_text(encoding="utf-8"))
     up_commit = run(["git", "rev-parse", "HEAD"],
                     cwd=up_dir, capture=True).stdout.strip()
-    log(f"Timingyyds 版本: {ab_pkg.get('version', '?')}")
-    log(f"上游版本: {up_pkg.get('version', '?')} ({up_commit[:8]})")
+    log(f"Timingyyds 底基: v{ab_pkg.get('version', '?')} ({ANDROID_BASE_BRANCH})")
+    log(f"上游版本: {up_tag} / package.json v{up_pkg.get('version', '?')} ({up_commit[:8]})")
+
+    # ---- 检查上游是否有新提交（无更新则跳过构建）----
+    state_file = target_dir / ".upstream-sync"
+    prev_up_commit = ""
+    if state_file.exists():
+        prev_up_commit = state_file.read_text(encoding="utf-8").strip()
+
+    manual = os.environ.get("GITHUB_EVENT_NAME", "") == "workflow_dispatch"
+    if prev_up_commit == up_commit and not manual and not args.build_only:
+        log(f"\n上游无新提交（{up_commit[:8]}），跳过构建。")
+        log("如需强制构建，请手动触发 workflow。")
+        return
 
     if not args.build_only:
         log("\n--- 同步代码 ---")
@@ -615,6 +665,10 @@ def main():
         update_android_version(target_dir, version, args.dry_run)
 
         commit_and_push(target_dir, version, up_commit, args.dry_run)
+
+        # 记录当前上游 commit
+        if not args.dry_run:
+            state_file.write_text(up_commit, encoding="utf-8")
     else:
         cur = json.loads((target_dir / "package.json").read_text(encoding="utf-8"))
         version = cur.get("version", "0.0.0")
@@ -623,7 +677,7 @@ def main():
     apk = build_apk(target_dir, args.dry_run)
 
     log("\n--- 发布 ---")
-    create_release(target_dir, version, apk, token, args.dry_run)
+    create_release(target_dir, version, apk, token, args.dry_run, up_tag)
 
     log("\n全部完成！")
 
